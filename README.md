@@ -24,7 +24,9 @@ equity.
 
 ## Deployment
 
-Deployed to Cloudflare Pages at https://finmarkets-monitor.pages.dev (after first deploy).
+**Live deployment:** https://finmarkets-monitor.pages.dev
+
+Deployed to Cloudflare Pages.
 
 ### One-time setup
 
