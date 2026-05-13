@@ -1,6 +1,7 @@
 <script lang="ts">
   import SettingsPanel from './components/SettingsPanel.svelte';
   import DataPanel from './components/DataPanel.svelte';
+  import ChartPanel from './components/ChartPanel.svelte';
   import StatusBanner from './components/StatusBanner.svelte';
   import { getDb, getVersion } from './lib/duckdb';
   import { refreshState } from './lib/data.svelte';
@@ -46,6 +47,8 @@
   <SettingsPanel />
 
   <DataPanel />
+
+  <ChartPanel />
 
   {#if settings.apiKey.trim() === ''}
     <StatusBanner

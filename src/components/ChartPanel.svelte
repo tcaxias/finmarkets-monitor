@@ -1,0 +1,335 @@
+<script lang="ts">
+  // Lightweight Charts v5 — note the v5 API uses `addSeries(SeriesDef, opts)`
+  // with imported series definition constants (CandlestickSeries,
+  // HistogramSeries, LineSeries) instead of the v4 `addCandlestickSeries()`
+  // shorthand methods. Reference: https://tradingview.github.io/lightweight-charts/docs/series-types
+  import {
+    createChart,
+    CandlestickSeries,
+    HistogramSeries,
+    LineSeries,
+    LineStyle,
+    CrosshairMode,
+    type IChartApi,
+    type ISeriesApi,
+    type IPriceLine,
+    type UTCTimestamp,
+    type CandlestickData,
+    type LineData,
+    type HistogramData,
+  } from 'lightweight-charts';
+
+  import { settings } from '../lib/settings.svelte';
+  import { dataState } from '../lib/data.svelte';
+  import { computeThresholds, type Thresholds } from '../lib/math';
+  import { getCandles, getSma, getVolumeBars } from '../lib/queries';
+
+  let chartContainer: HTMLDivElement | undefined = $state();
+  let chart: IChartApi | undefined;
+  let candleSeries: ISeriesApi<'Candlestick'> | undefined;
+  let sma20Series: ISeriesApi<'Line'> | undefined;
+  let sma200Series: ISeriesApi<'Line'> | undefined;
+  let volumeSeries: ISeriesApi<'Histogram'> | undefined;
+  let priceLines: IPriceLine[] = [];
+  let resizeObserver: ResizeObserver | undefined;
+
+  let hasData = $state(false);
+  let loadError = $state<string | null>(null);
+
+  const COLORS = {
+    bg: '#0f1419',
+    grid: '#222222',
+    text: '#cccccc',
+    border: '#2e303a',
+    upWick: '#26a69a',
+    downWick: '#ef5350',
+    sma20: '#f5d76e',
+    sma200: '#ef5350',
+    pcover: '#ef5350',
+    pcoverPlus: '#f59e0b',
+    breakeven: '#9ca3af',
+  };
+
+  function buildChart(container: HTMLDivElement): void {
+    chart = createChart(container, {
+      width: container.clientWidth,
+      height: 500,
+      layout: {
+        background: { color: COLORS.bg },
+        textColor: COLORS.text,
+      },
+      grid: {
+        vertLines: { color: COLORS.grid },
+        horzLines: { color: COLORS.grid },
+      },
+      crosshair: { mode: CrosshairMode.Normal },
+      rightPriceScale: { borderColor: COLORS.border },
+      timeScale: { borderColor: COLORS.border, timeVisible: false },
+    });
+
+    candleSeries = chart.addSeries(CandlestickSeries, {
+      upColor: COLORS.upWick,
+      downColor: COLORS.downWick,
+      borderUpColor: COLORS.upWick,
+      borderDownColor: COLORS.downWick,
+      wickUpColor: COLORS.upWick,
+      wickDownColor: COLORS.downWick,
+    });
+
+    sma20Series = chart.addSeries(LineSeries, {
+      color: COLORS.sma20,
+      lineWidth: 2,
+      lineStyle: LineStyle.Solid,
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+
+    sma200Series = chart.addSeries(LineSeries, {
+      color: COLORS.sma200,
+      lineWidth: 2,
+      lineStyle: LineStyle.Solid,
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+
+    // Volume overlay: empty `priceScaleId` makes this an overlay scale (the
+    // canonical Lightweight Charts pattern). We then push it to the bottom
+    // 30% of the pane via scaleMargins.
+    volumeSeries = chart.addSeries(HistogramSeries, {
+      priceFormat: { type: 'volume' },
+      priceScaleId: '',
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+    volumeSeries.priceScale().applyOptions({
+      scaleMargins: { top: 0.7, bottom: 0 },
+    });
+  }
+
+  async function reloadAllData(): Promise<void> {
+    if (!chart || !candleSeries || !sma20Series || !sma200Series || !volumeSeries) {
+      return;
+    }
+    const ticker = settings.ticker.trim();
+    if (!ticker) {
+      hasData = false;
+      return;
+    }
+
+    loadError = null;
+    try {
+      const [candles, sma20, sma200, vol] = await Promise.all([
+        getCandles(ticker),
+        getSma(ticker, 20),
+        getSma(ticker, 200),
+        getVolumeBars(ticker),
+      ]);
+
+      if (candles.length === 0) {
+        hasData = false;
+        // Setting empty arrays clears the series cleanly.
+        candleSeries.setData([]);
+        sma20Series.setData([]);
+        sma200Series.setData([]);
+        volumeSeries.setData([]);
+        return;
+      }
+
+      // The `time as UTCTimestamp` cast is required by Lightweight Charts'
+      // nominal-typed time field; our queries.ts contract guarantees
+      // unix-second numbers here.
+      candleSeries.setData(
+        candles.map((c) => ({ ...c, time: c.time as UTCTimestamp })) as CandlestickData[],
+      );
+      sma20Series.setData(
+        sma20.map((p) => ({ ...p, time: p.time as UTCTimestamp })) as LineData[],
+      );
+      sma200Series.setData(
+        sma200.map((p) => ({ ...p, time: p.time as UTCTimestamp })) as LineData[],
+      );
+      volumeSeries.setData(
+        vol.map((v) => ({ ...v, time: v.time as UTCTimestamp })) as HistogramData[],
+      );
+
+      hasData = true;
+      chart.timeScale().fitContent();
+    } catch (err) {
+      loadError = err instanceof Error ? err.message : String(err);
+      console.error('ChartPanel: data load failed', err);
+    }
+  }
+
+  function clearPriceLines(): void {
+    if (!candleSeries) return;
+    for (const line of priceLines) {
+      candleSeries.removePriceLine(line);
+    }
+    priceLines = [];
+  }
+
+  function applyPriceLines(thresholds: Thresholds): void {
+    if (!candleSeries) return;
+    clearPriceLines();
+    // Skip rendering when the user hasn't entered a vest price yet — drawing
+    // lines at $0 just clutters the chart.
+    if (!Number.isFinite(thresholds.pbreakeven) || thresholds.pbreakeven <= 0) {
+      return;
+    }
+    priceLines.push(
+      candleSeries.createPriceLine({
+        price: thresholds.pcover,
+        color: COLORS.pcover,
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: 'Pcover',
+      }),
+      candleSeries.createPriceLine({
+        price: thresholds.pcoverPlus20,
+        color: COLORS.pcoverPlus,
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: 'Pcover+20%',
+      }),
+      candleSeries.createPriceLine({
+        price: thresholds.pbreakeven,
+        color: COLORS.breakeven,
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: 'Vest',
+      }),
+    );
+  }
+
+  $effect(() => {
+    if (!chartContainer) return;
+    buildChart(chartContainer);
+
+    resizeObserver = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry && chart) {
+        chart.applyOptions({ width: entry.contentRect.width });
+      }
+    });
+    resizeObserver.observe(chartContainer);
+
+    // Initial paint: pull whatever's already in OPFS.
+    void reloadAllData().then(() => {
+      const t = computeThresholds(settings.vestPrice, settings.shares, settings.taxRate);
+      applyPriceLines(t);
+    });
+
+    return () => {
+      resizeObserver?.disconnect();
+      resizeObserver = undefined;
+      clearPriceLines();
+      chart?.remove();
+      chart = undefined;
+      candleSeries = undefined;
+      sma20Series = undefined;
+      sma200Series = undefined;
+      volumeSeries = undefined;
+    };
+  });
+
+  // Reload data whenever a fetch completes or the ticker changes. Reading the
+  // runes in the body (not just inside the async fn) is what registers the
+  // dependency with Svelte's reactivity tracker.
+  $effect(() => {
+    const _fetched = dataState.lastFetched;
+    const _ticker = settings.ticker;
+    const _rowCount = dataState.rowCount;
+    void _fetched;
+    void _ticker;
+    void _rowCount;
+    if (chart) {
+      void reloadAllData();
+    }
+  });
+
+  // Recompute price lines whenever any threshold input changes.
+  $effect(() => {
+    const t = computeThresholds(settings.vestPrice, settings.shares, settings.taxRate);
+    if (chart && candleSeries) {
+      applyPriceLines(t);
+    }
+  });
+</script>
+
+<section class="chart-panel">
+  <h2>Chart</h2>
+
+  {#if loadError}
+    <div class="banner error" role="alert">Chart load failed: {loadError}</div>
+  {/if}
+
+  <div class="chart-wrapper">
+    <div class="chart-container" bind:this={chartContainer}></div>
+
+    {#if !hasData}
+      <div class="placeholder">
+        No data — click <strong>Refresh data</strong> to fetch.
+      </div>
+    {/if}
+  </div>
+</section>
+
+<style>
+  .chart-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 20px;
+    background: #1a1b22;
+    border: 1px solid #2e303a;
+    border-radius: 8px;
+    color: #e5e7eb;
+    font-size: 14px;
+    text-align: left;
+  }
+
+  h2 {
+    margin: 0;
+    font-size: 18px;
+    color: #f3f4f6;
+  }
+
+  .chart-wrapper {
+    position: relative;
+    width: 100%;
+    min-height: 500px;
+  }
+
+  .chart-container {
+    width: 100%;
+    height: 500px;
+  }
+
+  .placeholder {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(15, 20, 25, 0.85);
+    color: #9ca3af;
+    font-size: 14px;
+    pointer-events: none;
+    border-radius: 4px;
+  }
+
+  .banner {
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    border: 1px solid transparent;
+  }
+
+  .banner.error {
+    background: rgba(239, 68, 68, 0.12);
+    border-color: rgba(239, 68, 68, 0.4);
+    color: #fca5a5;
+  }
+</style>
