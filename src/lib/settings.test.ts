@@ -162,6 +162,24 @@ describe('validatePosition', () => {
     ]);
   });
 
+  // Strict UTC round-trip: catches dates that JS would silently normalize
+  // (Feb 30 → Mar 2, month 13 → next year). Mirrors viewState's isValidAsOf.
+  it('rejects taxDueDate with an impossible day (Feb 30)', () => {
+    expect(validatePosition({ ...valid(), taxDueDate: '2026-02-30' })).toEqual([
+      expect.objectContaining({ field: 'taxDueDate' }),
+    ]);
+  });
+
+  it('rejects taxDueDate with an impossible month (month 13)', () => {
+    expect(validatePosition({ ...valid(), taxDueDate: '2026-13-01' })).toEqual([
+      expect.objectContaining({ field: 'taxDueDate' }),
+    ]);
+  });
+
+  it('accepts a real calendar date for taxDueDate', () => {
+    expect(validatePosition({ ...valid(), taxDueDate: '2026-04-15' })).toEqual([]);
+  });
+
   it('returns multiple errors when multiple fields are bad', () => {
     const errs = validatePosition({
       ticker: '!!',
@@ -282,6 +300,39 @@ describe('loadOrMigrate', () => {
     const s = loadOrMigrate();
     expect(s.apiKey).toBe('k');
     expect(s.positions.length).toBe(0);
+    expect(s.activePositionId).toBe(null);
+  });
+
+  // Stale activePositionId guard: if the saved id doesn't reference a
+  // surviving position (manual edit, deletion in another tab, dropped
+  // by isValidPosition), fall back to positions[0]?.id ?? null so the
+  // UI never sits in "no tab selected" limbo.
+  it('normalizes activePositionId when it references a missing id (falls back to first)', () => {
+    memStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        apiKey: '',
+        positions: [
+          { id: 'real-1', ticker: 'AAPL', vestPrice: 1, shares: 1, taxRate: 0.4, taxDueDate: '' },
+          { id: 'real-2', ticker: 'NVDA', vestPrice: 1, shares: 1, taxRate: 0.4, taxDueDate: '' },
+        ],
+        activePositionId: 'ghost-id-that-does-not-exist',
+      }),
+    );
+    const s = loadOrMigrate();
+    expect(s.activePositionId).toBe('real-1');
+  });
+
+  it('normalizes activePositionId to null when positions are empty', () => {
+    memStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        apiKey: '',
+        positions: [],
+        activePositionId: 'orphan',
+      }),
+    );
+    const s = loadOrMigrate();
     expect(s.activePositionId).toBe(null);
   });
 });

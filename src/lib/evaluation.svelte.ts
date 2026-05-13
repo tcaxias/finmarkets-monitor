@@ -114,28 +114,41 @@ export function getEval(ticker: string): PerTickerEval {
   return evalState.byTicker[t];
 }
 
-// In-flight guard per ticker so back-to-back triggers (e.g. from a
-// $effect firing on multiple deps) don't double-fetch the same slice.
+// In-flight guard per (ticker, asOf) tuple so back-to-back triggers
+// (e.g. from a $effect firing on multiple deps) don't double-fetch the
+// same slice — but a date switch mid-flight DOES schedule a fresh run
+// because the dedupe key includes asOf.
 const inFlight = new Map<string, Promise<void>>();
+
+function flightKey(ticker: string, asOf: string | null): string {
+  return `${ticker}|${asOf ?? 'live'}`;
+}
 
 /**
  * Recompute everything for one ticker. Pulls candles/MAs/volume/closes in
  * parallel from DuckDB, then runs the indicator + witness math on the
  * in-memory result. Bumps the slice's `generation` counter so chart
  * panels re-render.
+ *
+ * Race handling: on completion, re-checks `viewState.asOfDate` against
+ * the snapshot used for this run. If they no longer match, schedules a
+ * follow-up `recomputeOne` so the slice eventually settles to the
+ * current view. Without this, switching dates while a recompute was in
+ * flight could leave the UI permanently showing data for the old date.
  */
 export async function recomputeOne(ticker: string): Promise<void> {
   const t = ticker.trim().toUpperCase();
   if (!t) return;
 
-  const existing = inFlight.get(t);
+  // Snapshot the asOfDate at the start of recompute so the same value is
+  // used for every parallel query AND stamped on the slice.
+  const asOf = viewState.asOfDate;
+  const key = flightKey(t, asOf);
+
+  const existing = inFlight.get(key);
   if (existing) return existing;
 
   const slice = getEval(t);
-  // Snapshot the asOfDate at the start of recompute so the same value is
-  // used for every parallel query AND stamped on the slice. Reading
-  // viewState mid-flight could race against a user's "Apply" click.
-  const asOf = viewState.asOfDate;
   const work = (async () => {
     slice.loading = true;
     slice.error = null;
@@ -195,10 +208,16 @@ export async function recomputeOne(ticker: string): Promise<void> {
       slice.loading = false;
     }
   })().finally(() => {
-    inFlight.delete(t);
+    inFlight.delete(key);
+    // Date switched mid-flight? Schedule a follow-up so the slice
+    // eventually reflects the current viewState. We do this AFTER the
+    // map cleanup so the recursive call doesn't see its own promise.
+    if (viewState.asOfDate !== asOf) {
+      void recomputeOne(t);
+    }
   });
 
-  inFlight.set(t, work);
+  inFlight.set(key, work);
   return work;
 }
 

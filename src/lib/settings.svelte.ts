@@ -95,11 +95,21 @@ export function loadOrMigrate(): SettingsState {
   // Already-new shape: trust the `positions` array marker.
   if (Array.isArray((parsed as { positions?: unknown }).positions)) {
     const next = parsed as Partial<SettingsState>;
+    const positions = (next.positions ?? []).filter(isValidPosition);
+    // Normalize activePositionId: must reference a position that actually
+    // survived validation. Stale ids (manual localStorage edits, deleted
+    // positions in another tab) get rewritten to the first remaining
+    // position or null, so the UI never sits in "no tab selected" limbo.
+    const rawActive =
+      typeof next.activePositionId === 'string' ? next.activePositionId : null;
+    const activePositionId =
+      rawActive !== null && positions.some((p) => p.id === rawActive)
+        ? rawActive
+        : (positions[0]?.id ?? null);
     return {
       apiKey: typeof next.apiKey === 'string' ? next.apiKey : '',
-      positions: (next.positions ?? []).filter(isValidPosition),
-      activePositionId:
-        typeof next.activePositionId === 'string' ? next.activePositionId : null,
+      positions,
+      activePositionId,
     };
   }
 
@@ -215,12 +225,33 @@ export function validatePosition(p: Omit<Position, 'id'>): ValidationError[] {
     errors.push({ field: 'taxRate', message: 'Tax rate must be between 0 and 1 (exclusive).' });
   }
   if (p.taxDueDate) {
-    const d = new Date(`${p.taxDueDate}T00:00:00Z`);
-    if (Number.isNaN(d.getTime())) {
-      errors.push({ field: 'taxDueDate', message: 'Tax due date must be a valid YYYY-MM-DD date.' });
+    if (!isValidIsoDate(p.taxDueDate)) {
+      errors.push({
+        field: 'taxDueDate',
+        message: 'Tax due date must be a valid YYYY-MM-DD date.',
+      });
     }
   }
   return errors;
+}
+
+/**
+ * Strict ISO yyyy-mm-dd validation with calendar round-trip. Rejects
+ * impossible dates that JS would otherwise normalize (e.g. Feb 30 → Mar 2).
+ * Mirrors the pattern used by viewState.svelte.ts:isValidAsOf.
+ */
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function isValidIsoDate(iso: string): boolean {
+  if (!ISO_DATE_RE.test(iso)) return false;
+  const [y, m, d] = iso.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  if (Number.isNaN(dt.getTime())) return false;
+  return (
+    dt.getUTCFullYear() === y &&
+    dt.getUTCMonth() === m - 1 &&
+    dt.getUTCDate() === d
+  );
 }
 
 // ---------- mutation helpers ----------

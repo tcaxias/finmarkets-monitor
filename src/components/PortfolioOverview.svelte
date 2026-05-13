@@ -138,13 +138,13 @@
       case 'ticker':
         return dir * a.pos.ticker.localeCompare(b.pos.ticker);
       case 'price':
-        return dir * cmpNullable(a.price, b.price);
+        return cmpNullableDirected(a.price, b.price, dir);
       case 'dayChange':
-        return dir * cmpNullable(a.dayChangePct, b.dayChangePct);
+        return cmpNullableDirected(a.dayChangePct, b.dayChangePct, dir);
       case 'pcover':
         return dir * (a.pcover - b.pcover);
       case 'distance':
-        return dir * cmpNullable(a.distance, b.distance);
+        return cmpNullableDirected(a.distance, b.distance, dir);
       case 'conviction':
         return dir * (a.convictionRank - b.convictionRank);
       case 'updated': {
@@ -155,13 +155,23 @@
     }
   }
 
-  // Nullable comparator: nulls always sort last regardless of direction
-  // so empty rows stay grouped at the bottom.
-  function cmpNullable(a: number | null, b: number | null): number {
+  /**
+   * Nullable comparator with direction-independent null placement: nulls
+   * always sort last regardless of `dir`, so empty/no-data rows stay
+   * grouped at the bottom whether the user is sorting asc or desc.
+   *
+   * The previous implementation multiplied the null comparison by `dir`,
+   * which floated nulls to the top in descending mode (review Major #2).
+   */
+  function cmpNullableDirected(
+    a: number | null,
+    b: number | null,
+    dir: 1 | -1,
+  ): number {
     if (a === null && b === null) return 0;
     if (a === null) return 1;
     if (b === null) return -1;
-    return a - b;
+    return dir * (a - b);
   }
 
   const sortedRows = $derived([...rows].sort(compareRows));

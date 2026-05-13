@@ -5,6 +5,40 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed (Phase A/B review findings)
+
+- **`recomputeOne` asOfDate race** — in-flight dedupe was keyed only by
+  ticker, so a date switch mid-flight would be dropped. Key is now
+  `${ticker}|${asOf ?? 'live'}` and on completion the snapshot is
+  re-checked against `viewState.asOfDate`; if it moved during the run,
+  a follow-up `recomputeOne` is scheduled so the slice eventually
+  settles on the current view.
+- **`PortfolioOverview` null sort in descending mode** — nulls floated
+  to the top in `dir = -1` because the direction multiplier was applied
+  to the null comparison. Renamed `cmpNullable` → `cmpNullableDirected`
+  and moved null placement before the direction multiply, so nulls
+  always sort last regardless of `dir`.
+- **`loadOrMigrate` activePositionId normalization** — new-shape branch
+  now validates that the saved `activePositionId` references a
+  surviving position; stale ids fall back to `positions[0]?.id ?? null`.
+  Prevents the "no tab selected" limbo after manual localStorage edits
+  or out-of-tab deletions.
+- **`validatePosition` strict date check** — `taxDueDate` validation
+  now uses the same UTC round-trip pattern as `viewState`'s
+  `isValidAsOf`, rejecting impossible calendar dates like Feb 30 or
+  month 13 that JS would otherwise silently normalize.
+- **Historical-view banner is now sticky** under the page nav (`top:
+  42px`, `z-index: 9`, with backdrop-filter) so it stays visible while
+  scrolling through lower sections. `PositionTabs` shifts its sticky
+  band down by ~38px in historical mode via a `:global()` rule on
+  `.page.historical`.
+
+5 new tests added (total: 118): 3 covering the strict date check
+(Feb 30, month 13, real date) and 2 covering `activePositionId`
+normalization (stale id with positions, stale id with empty positions).
+The asOfDate race fix isn't directly testable without DuckDB-WASM in
+the test runner; verified by reading the in-flight key construction.
+
 ### Added (Phase B — historical backtest mode)
 
 - **`viewState.svelte.ts`** — reactive `asOfDate` Svelte rune state with

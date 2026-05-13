@@ -127,7 +127,7 @@
   );
 </script>
 
-<div class="page">
+<div class="page" class:historical={viewState.asOfDate !== null}>
   <header class="site-header">
     <div class="container narrow">
       <h1>{headerTitle}</h1>
@@ -369,12 +369,30 @@
   }
 
   /* Historical-view banner: amber/warn tone so the user can't miss that
-     the dashboard is in backtest mode. Sits above StatusBanner; uses the
-     wide row so it never wraps awkwardly under the prominent text. */
+     the dashboard is in backtest mode. Sticky directly under the
+     page-nav (top:0, ~42px tall) so it stays visible while scrolling
+     through lower sections — losing track of historical mode mid-scroll
+     is a real foot-gun (review Polish #2). When this banner is present
+     we push PositionTabs further down via the global rule below. */
   .historical-banner-wrap {
+    position: sticky;
+    top: 42px;
+    z-index: 9;
     background: var(--warn-soft);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     border-bottom: 1px solid rgba(245, 158, 11, 0.4);
-    margin-bottom: var(--gap-lg);
+    /* No bottom margin in historical mode — keeps the sticky stack tight
+       against PositionTabs without a transparent gap. */
+    margin-bottom: 0;
+  }
+
+  /* When the page is in historical mode, shift the sticky PositionTabs
+     down by the banner's approximate height (~38px) so the two sticky
+     bands stack without overlap. Uses :global() because PositionTabs
+     is a child component and its styles are scoped. */
+  .page.historical :global(.position-tabs) {
+    top: 80px;
   }
 
   .historical-banner {
