@@ -1,19 +1,23 @@
 <script lang="ts">
-  // Application root. Composes the panels in weekly-review order:
+  // Application root.
   //
-  //   Status → Settings → Data → Witnesses → Chart → Indicators → Review
+  // Phase A multi-ticker layout:
+  //   Header → StatusBanner → PositionTabs (sticky) →
+  //     [PortfolioOverview] OR [WitnessPanel + ChartPanel + RsiPanel +
+  //                              MacdPanel + ReviewExport] →
+  //   PositionsPanel → DataPanel → About / footer
   //
-  // Layout uses two width tiers via CSS custom properties (`--col-narrow`
-  // for control/text panels, `--col-wide` for charts). All panels live in
-  // the same vertical column; only their internal `max-width` differs.
-  //
-  // Reactivity: a single `$effect` watches `dataState.lastFetched` and
-  // `settings.ticker` and triggers `recompute()` on the shared evaluation
-  // cache. This is the M7 architectural cleanup — previously each panel
-  // ran its own queries; now they all read from `evalState`.
+  // The shared evaluation cache (`evalState.byTicker`) is now per-ticker.
+  // We trigger `recomputeOne(activeTicker)` whenever the active position
+  // changes or its data refreshes, plus a one-shot `recomputeAll()` for
+  // any other tickers whose data was just refreshed (so the portfolio
+  // overview stays current even when the user is parked on a single
+  // ticker view).
 
   import StatusBanner from './components/StatusBanner.svelte';
-  import SettingsPanel from './components/SettingsPanel.svelte';
+  import PositionTabs from './components/PositionTabs.svelte';
+  import PortfolioOverview from './components/PortfolioOverview.svelte';
+  import PositionsPanel from './components/PositionsPanel.svelte';
   import DataPanel from './components/DataPanel.svelte';
   import WitnessPanel from './components/WitnessPanel.svelte';
   import ChartPanel from './components/ChartPanel.svelte';
@@ -22,8 +26,8 @@
   import ReviewExport from './components/ReviewExport.svelte';
   import { getDb, getVersion } from './lib/duckdb';
   import { refreshState, dataState } from './lib/data.svelte';
-  import { settings } from './lib/settings.svelte';
-  import { evalState, recompute } from './lib/evaluation.svelte';
+  import { settings, getActivePosition } from './lib/settings.svelte';
+  import { evalState, getEval, recomputeAll, recomputeOne } from './lib/evaluation.svelte';
 
   let dbStatus = $state<'loading' | 'ready' | 'error'>('loading');
   let dbVersion = $state<string>('');
@@ -35,9 +39,12 @@
         await getDb();
         dbVersion = await getVersion();
         dbStatus = 'ready';
-        // Pull any persisted OPFS data into reactive state so the UI is
-        // accurate before the user touches anything.
+        // Pull persisted OPFS data into reactive state for every position
+        // so the overview shows row counts without forcing a refresh.
         await refreshState();
+        // Compute slices for every position so the overview table can
+        // render conviction + price immediately on load.
+        await recomputeAll();
       } catch (err) {
         dbStatus = 'error';
         dbError = err instanceof Error ? err.message : String(err);
@@ -46,39 +53,64 @@
     })();
   });
 
-  // Single recompute trigger for the shared evaluation cache. Reading the
-  // runes inside the effect body (not just inside the async fn) is what
-  // registers them as dependencies — same pattern as the chart panels.
+  const activePosition = $derived.by(() => {
+    settings.activePositionId;
+    settings.positions.length;
+    return getActivePosition();
+  });
+
+  // Per-ticker recompute trigger. Watches active position's ticker and
+  // its row count so that a successful refresh re-runs the evaluation
+  // for that ticker.
   $effect(() => {
-    const _fetched = dataState.lastFetched;
-    const _ticker = settings.ticker;
-    const _rowCount = dataState.rowCount;
-    void _fetched;
-    void _ticker;
+    const t = activePosition?.ticker ?? '';
+    const _rowCount = t ? dataState.rowCount[t] ?? 0 : 0;
+    const _fetched = t ? dataState.lastFetchedByTicker[t] ?? null : null;
     void _rowCount;
-    if (dbStatus === 'ready') {
-      void recompute();
+    void _fetched;
+    if (dbStatus === 'ready' && t) {
+      void recomputeOne(t);
     }
   });
 
-  // Dynamic document title: "<TICKER> $20.97 — Monitor". Updates as the latest
-  // close changes, so a glance at the browser tab tells the user where price
-  // is right now.
+  // When the global `lastFetched` watermark advances (any ticker just
+  // got fresh data), recompute every slice so the overview stays current
+  // even if the user is parked on a per-ticker view.
   $effect(() => {
-    const t = settings.ticker.trim().toUpperCase() || 'Finmarkets';
-    const price = evalState.latestClose;
+    const _watermark = dataState.lastFetched;
+    void _watermark;
+    if (dbStatus === 'ready') {
+      void recomputeAll();
+    }
+  });
+
+  // Dynamic document title: "<TICKER> $20.97 — Monitor" for the active
+  // position; falls back to "Portfolio — Monitor" in overview mode.
+  $effect(() => {
+    if (!activePosition) {
+      document.title = 'Portfolio — Monitor';
+      return;
+    }
+    const t = activePosition.ticker;
+    void evalState.byTicker;
+    const slice = getEval(t);
+    const price = slice.latestClose;
     if (price !== null && Number.isFinite(price)) {
       document.title = `${t} $${price.toFixed(2)} — Monitor`;
     } else {
       document.title = `${t} — Monitor`;
     }
   });
+
+  const headerTitle = $derived(
+    activePosition ? `${activePosition.ticker} Monitor` : 'Finmarkets Monitor',
+  );
 </script>
 
 <div class="page">
   <header class="site-header">
     <div class="container narrow">
-      <h1>{settings.ticker.trim().toUpperCase() || 'Finmarkets'} Monitor</h1>
+      <h1>{headerTitle}</h1>
       <p class="subtitle">Personal reference tool</p>
       <p class="db-status" data-status={dbStatus}>
         {#if dbStatus === 'loading'}
@@ -95,12 +127,14 @@
   <nav class="page-nav" aria-label="In-page navigation">
     <div class="container narrow nav-inner">
       <a href="#status">Status</a>
-      <a href="#settings">Settings</a>
+      <a href="#positions">Positions</a>
       <a href="#data">Data</a>
-      <a href="#witnesses">Witnesses</a>
-      <a href="#chart">Chart</a>
-      <a href="#indicators">Indicators</a>
-      <a href="#review">Review</a>
+      {#if activePosition}
+        <a href="#witnesses">Witnesses</a>
+        <a href="#chart">Chart</a>
+        <a href="#indicators">Indicators</a>
+        <a href="#review">Review</a>
+      {/if}
     </div>
   </nav>
 
@@ -109,31 +143,37 @@
       <StatusBanner />
     </section>
 
-    <section class="container narrow stack" id="settings">
-      <SettingsPanel />
+    <PositionTabs />
+
+    {#if !activePosition}
+      <section class="container wide stack" id="overview">
+        <PortfolioOverview />
+      </section>
+    {:else}
+      <section class="container narrow stack" id="witnesses">
+        <WitnessPanel />
+      </section>
+
+      <section class="container wide stack" id="chart">
+        <ChartPanel />
+      </section>
+
+      <section class="container wide stack" id="indicators">
+        <RsiPanel />
+        <MacdPanel />
+      </section>
+
+      <section class="container narrow stack" id="review">
+        <ReviewExport />
+      </section>
+    {/if}
+
+    <section class="container narrow stack" id="positions">
+      <PositionsPanel />
     </section>
 
     <section class="container narrow stack" id="data">
       <DataPanel />
-    </section>
-
-    <section class="container narrow stack" id="witnesses">
-      <WitnessPanel />
-    </section>
-
-    <!-- Chart gets the full wide column so candles + 200-MA history are
-         legible without horizontal scrolling. -->
-    <section class="container wide stack" id="chart">
-      <ChartPanel />
-    </section>
-
-    <section class="container wide stack" id="indicators">
-      <RsiPanel />
-      <MacdPanel />
-    </section>
-
-    <section class="container narrow stack" id="review">
-      <ReviewExport />
     </section>
 
     <section class="container narrow stack">
@@ -142,7 +182,7 @@
         <div class="about-body">
           <p>
             <strong>Finmarkets Monitor</strong> is a personal browser-based dashboard for
-            monitoring a single equity position with a tax-overhang exit framework. It
+            monitoring equity positions with a tax-overhang exit framework. It
             fetches daily OHLCV from Twelve Data, persists it locally via DuckDB-WASM
             (OPFS), and renders the three-witness conviction model from the companion
             methodology docs.
@@ -163,7 +203,7 @@
               checklist template
             </li>
           </ul>
-          <p>App version 0.1.0 — see README.md for setup and stack details.</p>
+          <p>App version 0.2.0 — see README.md for setup and stack details.</p>
         </div>
       </details>
     </section>
@@ -176,7 +216,7 @@
           licensed advisor or CPA.
         </p>
         <p class="meta">
-          App version 0.1.0 · Data: Twelve Data · Storage: DuckDB-WASM (OPFS)
+          App version 0.2.0 · Data: Twelve Data · Storage: DuckDB-WASM (OPFS)
         </p>
       </div>
     </footer>
@@ -208,8 +248,6 @@
     max-width: var(--col-wide);
   }
 
-  /* `stack` is a vertical-rhythm wrapper so each panel-bearing section
-     has consistent breathing room. */
   .stack {
     display: flex;
     flex-direction: column;
@@ -245,8 +283,6 @@
     color: #fca5a5;
   }
 
-  /* Sticky nav bar. Uses backdrop-filter blur so panels scrolling underneath
-     stay legible. */
   .page-nav {
     position: sticky;
     top: 0;
@@ -292,8 +328,6 @@
     padding-bottom: var(--gap-xl);
   }
 
-  /* About-this-app block — same look as the SettingsPanel summary so the
-     two collapsible sections feel of a piece. */
   .about-block {
     background: var(--surface);
     border: 1px solid var(--border);

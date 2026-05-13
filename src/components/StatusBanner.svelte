@@ -1,24 +1,19 @@
 <script lang="ts">
-  // Always-visible at-a-glance status bar. Single horizontal row showing
-  // ticker, current price, day change, Pcover headroom, last-fetched
-  // timestamp, and the witness conviction dot.
+  // Always-visible at-a-glance status bar for the active position.
   //
-  // All data is read from the shared `evalState` cache (populated by
-  // `lib/evaluation.svelte.ts`) and the existing `dataState` / `settings`
-  // stores. No queries are issued from this component — it's a pure
-  // projection of state computed elsewhere.
-  //
-  // When no data is loaded we degrade gracefully to a one-line muted
-  // message instead of showing dashes everywhere.
+  // Phase A multi-ticker rewrite: derives the active position from
+  // `settings.activePositionId`, then reads its evaluation slice via
+  // `getEval(position.ticker)`. When no position is active (portfolio
+  // overview mode) or the active position has no data yet, the banner
+  // degrades gracefully to a neutral hint message.
 
-  import { evalState } from '../lib/evaluation.svelte';
+  import { evalState, getEval } from '../lib/evaluation.svelte';
   import { dataState } from '../lib/data.svelte';
-  import { settings } from '../lib/settings.svelte';
+  import { settings, getActivePosition } from '../lib/settings.svelte';
   import { computeThresholds } from '../lib/math';
 
   // Keep a "now" tick so the relative-time string updates without us having
-  // to re-poll on every render. One-minute granularity is plenty for a
-  // "X minutes ago" display.
+  // to re-poll on every render. One-minute granularity is plenty.
   let now = $state(Date.now());
   $effect(() => {
     const id = setInterval(() => {
@@ -27,31 +22,46 @@
     return () => clearInterval(id);
   });
 
-  const ticker = $derived(settings.ticker.trim().toUpperCase() || '—');
+  // Touch the relevant settings slots so the $derived re-runs when the
+  // user switches positions or edits one. `getActivePosition()` is a
+  // read-only helper, not a rune itself.
+  const activePosition = $derived.by(() => {
+    settings.activePositionId;
+    settings.positions.length;
+    return getActivePosition();
+  });
+
+  const ticker = $derived(activePosition?.ticker ?? '');
+
+  const slice = $derived.by(() => {
+    if (!ticker) return null;
+    // Touch byTicker so reactivity re-fires when a new key is inserted.
+    void evalState.byTicker;
+    return getEval(ticker);
+  });
 
   const thresholds = $derived(
-    computeThresholds(settings.vestPrice, settings.shares, settings.taxRate),
+    activePosition
+      ? computeThresholds(activePosition.vestPrice, activePosition.shares, activePosition.taxRate)
+      : computeThresholds(0, 0, 0),
   );
 
   const hasData = $derived(
-    evalState.latestClose !== null && dataState.rowCount > 0,
+    !!slice && slice.latestClose !== null && (dataState.rowCount[ticker] ?? 0) > 0,
   );
 
   const dayChange = $derived.by(() => {
-    if (evalState.latestClose === null || evalState.prevClose === null) {
-      return null;
-    }
-    const abs = evalState.latestClose - evalState.prevClose;
-    const pct = evalState.prevClose === 0 ? 0 : (abs / evalState.prevClose) * 100;
+    if (!slice) return null;
+    if (slice.latestClose === null || slice.prevClose === null) return null;
+    const abs = slice.latestClose - slice.prevClose;
+    const pct = slice.prevClose === 0 ? 0 : (abs / slice.prevClose) * 100;
     return { abs, pct, direction: abs > 0 ? 'up' : abs < 0 ? 'down' : 'flat' };
   });
 
   // Pcover state: green when comfortably above (>20% headroom), amber when
-  // approaching (within 20%), red when at or below. We compute the gap from
-  // current price to the cover threshold; positive = cushion, negative =
-  // underwater.
+  // approaching (within 20%), red when at or below.
   const pcoverState = $derived.by(() => {
-    const price = evalState.latestClose;
+    const price = slice?.latestClose ?? null;
     const pcover = thresholds.pcover;
     if (price === null || !Number.isFinite(pcover) || pcover <= 0) {
       return { tone: 'muted' as const, cushion: null as number | null };
@@ -64,6 +74,10 @@
     else tone = 'good';
     return { tone, cushion };
   });
+
+  const lastFetched = $derived(
+    ticker ? (dataState.lastFetchedByTicker[ticker] ?? null) : null,
+  );
 
   function fmtPrice(v: number | null): string {
     if (v === null || !Number.isFinite(v)) return '—';
@@ -88,8 +102,6 @@
     if (diffMin < 60) return `${diffMin} min ago`;
     const diffHr = Math.round(diffMin / 60);
     if (diffHr < 24) return `${diffHr}h ago`;
-    // > 24h: switch to absolute date+time so the user knows exactly how
-    // stale the data is.
     const yyyy = d.getFullYear();
     const mm = String(d.getMonth() + 1).padStart(2, '0');
     const dd = String(d.getDate()).padStart(2, '0');
@@ -98,7 +110,6 @@
     return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
   }
 
-  // Map conviction enum → dot-class + short label suitable for the banner.
   function convictionDotClass(c: string | null): string {
     switch (c) {
       case 'high-bullish':
@@ -131,15 +142,19 @@
 </script>
 
 <section class="status-banner" aria-label="Current position status">
-  {#if !hasData}
+  {#if !activePosition}
+    <span class="muted-msg">
+      Select a position from the tabs above, or add one in the Positions panel.
+    </span>
+  {:else if !hasData}
     <span class="ticker-pill">{ticker}</span>
     <span class="muted-msg">
-      Awaiting data — open Settings + Data panels to begin
+      Awaiting data — refresh in the Data panel below.
     </span>
-  {:else}
+  {:else if slice}
     <span class="ticker-pill">{ticker}</span>
 
-    <span class="price">{fmtPrice(evalState.latestClose)}</span>
+    <span class="price">{fmtPrice(slice.latestClose)}</span>
 
     {#if dayChange}
       <span class="day-change" data-direction={dayChange.direction}>
@@ -171,15 +186,15 @@
 
     <span class="block">
       <span class="block-label">Updated</span>
-      <span class="block-value">{fmtTimeAgo(dataState.lastFetched, now)}</span>
+      <span class="block-value">{fmtTimeAgo(lastFetched, now)}</span>
     </span>
 
     <span class="sep" aria-hidden="true"></span>
 
     <span class="block conviction">
-      <span class={convictionDotClass(evalState.summary?.conviction ?? null)}></span>
+      <span class={convictionDotClass(slice.summary?.conviction ?? null)}></span>
       <span class="block-value">
-        {shortConvictionLabel(evalState.summary?.conviction ?? null)}
+        {shortConvictionLabel(slice.summary?.conviction ?? null)}
       </span>
     </span>
   {/if}

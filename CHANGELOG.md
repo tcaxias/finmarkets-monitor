@@ -5,6 +5,51 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added (Phase A — multi-ticker portfolio support)
+
+- **Multi-position portfolio model.** Settings now hold a list of
+  `Position` objects (ticker, vest price, shares, tax rate, due date)
+  instead of a single ticker scalar. The Twelve Data API key remains
+  single since it ties to one account.
+- **Forward-migration from the legacy single-ticker shape.** On first
+  load, an existing `finmarkets-monitor:settings` payload with the old
+  `{ ticker, vestPrice, ... }` shape is wrapped as `positions[0]` and
+  rewritten to localStorage. Migration is idempotent.
+- **`PositionTabs` sticky bar** under the status banner with one tab per
+  position plus a "Portfolio" meta-tab. Arrow-key navigation supported.
+- **`PortfolioOverview` component** — sortable table of every position
+  with latest price, day change, Pcover threshold, distance/cushion,
+  three-witness conviction, and last-updated relative time. Click a
+  ticker to jump into its per-ticker view.
+- **`PositionsPanel` component** replaces the old `SettingsPanel`. Inline
+  add/edit/delete forms with synchronous validation
+  (`validatePosition`).
+- **Per-ticker evaluation cache.** `evalState.byTicker[ticker]` holds an
+  independent slice (candles, MAs, RSI, MACD, witnesses) per position.
+  `getEval(ticker)`, `recomputeOne(ticker)`, and `recomputeAll()`
+  replace the old singleton `recompute`.
+- **`refreshAll()` with rate-limit-aware sequencing.** Walks every
+  configured position; spaces requests by 8s when there are more than
+  7 positions to stay inside Twelve Data's 8 req/min free tier.
+  Exposes per-batch progress via `dataState.refreshProgress`.
+- **40 new tests** covering migration scenarios, validation rules, and
+  every mutation helper. Total tests: 93 (up from 53).
+
+### Changed (Phase A)
+
+- **All per-ticker views (StatusBanner, Witness, Chart, RSI, MACD,
+  ReviewExport) read from the active position's evaluation slice**
+  rather than the old singleton `evalState`. When no position is
+  active (portfolio overview mode), each panel renders a
+  "select a position" placeholder.
+- **`refreshData(ticker)` and `refreshState(ticker)` take an explicit
+  ticker argument.** `dataState` now keeps per-ticker maps for row
+  count, latest close, latest date, and last fetched.
+
+### Removed
+
+- **`SettingsPanel.svelte`** — replaced by `PositionsPanel.svelte`.
+
 ### Changed
 
 - **Volume handling preserves nulls end-to-end.** `VolumeBar.value` is now

@@ -1,16 +1,41 @@
 <script lang="ts">
-  import { dataState, refreshData, clearCache } from '../lib/data.svelte';
+  // Data panel — refresh controls.
+  //
+  // Phase A multi-ticker rewrite: the primary "Refresh data" button targets
+  // the active position; "Refresh all" walks every configured position
+  // sequentially with rate-limit-aware spacing.
+
+  import { dataState, refreshData, refreshAll, clearCache } from '../lib/data.svelte';
   import { runtimeState } from '../lib/runtimeState.svelte';
-  import { settings } from '../lib/settings.svelte';
+  import { settings, getActivePosition } from '../lib/settings.svelte';
 
   let clearing = $state(false);
 
-  const canRefresh = $derived(
-    !dataState.loading && settings.apiKey.trim() !== '' && settings.ticker.trim() !== '',
+  const activePosition = $derived.by(() => {
+    settings.activePositionId;
+    settings.positions.length;
+    return getActivePosition();
+  });
+
+  const canRefreshActive = $derived(
+    !dataState.loading &&
+      settings.apiKey.trim() !== '' &&
+      activePosition !== null,
   );
 
-  async function onRefresh(): Promise<void> {
-    await refreshData();
+  const canRefreshAll = $derived(
+    !dataState.loading &&
+      settings.apiKey.trim() !== '' &&
+      settings.positions.length > 0,
+  );
+
+  async function onRefreshActive(): Promise<void> {
+    if (!activePosition) return;
+    await refreshData(activePosition.ticker);
+  }
+
+  async function onRefreshAll(): Promise<void> {
+    await refreshAll();
   }
 
   async function onClear(): Promise<void> {
@@ -31,18 +56,48 @@
     return `${hh}:${mm}`;
   }
 
-  function fmtPrice(n: number | null): string {
-    if (n === null) return '—';
+  function fmtPrice(n: number | null | undefined): string {
+    if (n === null || n === undefined) return '—';
     return `$${n.toFixed(2)}`;
   }
+
+  // Aggregate row count across all known tickers — gives the user a
+  // quick sense of total data volume without listing each ticker.
+  const totalRows = $derived(
+    Object.values(dataState.rowCount).reduce((sum, n) => sum + n, 0),
+  );
+
+  // For the active position's per-ticker latest close display.
+  const activeTicker = $derived(activePosition?.ticker ?? '');
+  const activeRowCount = $derived(activeTicker ? (dataState.rowCount[activeTicker] ?? 0) : 0);
+  const activeLatestClose = $derived(
+    activeTicker ? (dataState.latestCloseByTicker[activeTicker] ?? null) : null,
+  );
+  const activeLatestDate = $derived(
+    activeTicker ? (dataState.latestDateByTicker[activeTicker] ?? null) : null,
+  );
+  const activeLastFetched = $derived(
+    activeTicker ? (dataState.lastFetchedByTicker[activeTicker] ?? null) : null,
+  );
 </script>
 
 <section class="data-panel">
   <h2>Market Data</h2>
 
   <div class="row actions">
-    <button type="button" onclick={onRefresh} disabled={!canRefresh}>
-      {dataState.loading ? 'Refreshing…' : 'Refresh data'}
+    <button type="button" onclick={onRefreshActive} disabled={!canRefreshActive}>
+      {#if dataState.loading && !dataState.refreshProgress}
+        Refreshing…
+      {:else}
+        Refresh {activeTicker || 'active'}
+      {/if}
+    </button>
+    <button type="button" onclick={onRefreshAll} disabled={!canRefreshAll}>
+      {#if dataState.refreshProgress}
+        Refreshing {dataState.refreshProgress.current}/{dataState.refreshProgress.total}: {dataState.refreshProgress.ticker}…
+      {:else}
+        Refresh all
+      {/if}
     </button>
     <button type="button" class="ghost" onclick={onClear} disabled={clearing || dataState.loading}>
       {clearing ? 'Clearing…' : 'Clear cache'}
@@ -54,20 +109,30 @@
   {/if}
 
   <dl>
-    <dt>Last fetched</dt>
-    <dd>{fmtTime(dataState.lastFetched)}</dd>
+    <dt>Active position</dt>
+    <dd>
+      {#if activePosition}
+        {activeTicker}
+        <span class="muted">— last fetched {fmtTime(activeLastFetched)}</span>
+      {:else}
+        <span class="muted">None (portfolio overview)</span>
+      {/if}
+    </dd>
 
-    <dt>Rows in DB</dt>
-    <dd>{dataState.rowCount}</dd>
+    <dt>Rows for {activeTicker || 'active'}</dt>
+    <dd>{activeRowCount}</dd>
 
     <dt>Latest close</dt>
     <dd>
-      {#if dataState.latestClose !== null && dataState.latestDate}
-        {fmtPrice(dataState.latestClose)} on {dataState.latestDate}
+      {#if activeLatestClose !== null && activeLatestDate}
+        {fmtPrice(activeLatestClose)} on {activeLatestDate}
       {:else}
         —
       {/if}
     </dd>
+
+    <dt>Total rows (all tickers)</dt>
+    <dd>{totalRows}</dd>
 
     <dt>Storage</dt>
     <dd class="storage" data-persistent={runtimeState.isPersistent}>
@@ -152,7 +217,7 @@
 
   dl {
     display: grid;
-    grid-template-columns: 160px 1fr;
+    grid-template-columns: 200px 1fr;
     gap: 6px 12px;
     margin: 0;
   }
@@ -165,6 +230,11 @@
     margin: 0;
     color: #f3f4f6;
     font-variant-numeric: tabular-nums;
+  }
+
+  .muted {
+    color: #9ca3af;
+    font-size: 12px;
   }
 
   .storage[data-persistent='true'] {

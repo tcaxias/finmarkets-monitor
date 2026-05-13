@@ -1,10 +1,7 @@
 <script lang="ts">
-  // RSI(14) chart with 30/50/70 reference lines and a basic divergence flag.
+  // RSI(14) chart for the active position.
   //
-  // Design choice: RSI lives in its own Lightweight Charts instance rather
-  // than a synced second pane. Cross-pane time-axis synchronization in
-  // Lightweight Charts requires manual subscription wiring that we'll
-  // tackle in M7 polish; for now each pane stands alone.
+  // Phase A multi-ticker rewrite: reads from `getEval(activeTicker)`.
   import {
     createChart,
     LineSeries,
@@ -17,7 +14,8 @@
     type LineData,
   } from 'lightweight-charts';
 
-  import { evalState } from '../lib/evaluation.svelte';
+  import { evalState, getEval } from '../lib/evaluation.svelte';
+  import { settings, getActivePosition } from '../lib/settings.svelte';
   import type { DivergenceFlag } from '../lib/indicators';
 
   let chartContainer: HTMLDivElement | undefined = $state();
@@ -33,6 +31,18 @@
     bearish: false,
     bullish: false,
     description: '',
+  });
+
+  const activePosition = $derived.by(() => {
+    settings.activePositionId;
+    settings.positions.length;
+    return getActivePosition();
+  });
+
+  const slice = $derived.by(() => {
+    if (!activePosition) return null;
+    void evalState.byTicker;
+    return getEval(activePosition.ticker);
   });
 
   const COLORS = {
@@ -59,9 +69,6 @@
         horzLines: { color: COLORS.grid },
       },
       crosshair: { mode: CrosshairMode.Normal },
-      // Pin RSI's y-axis to its natural [0, 100] domain so the reference
-      // lines stay at constant screen positions even when the value
-      // bounces around inside the band.
       rightPriceScale: {
         borderColor: COLORS.border,
         autoScale: false,
@@ -75,13 +82,9 @@
       lineStyle: LineStyle.Solid,
       priceLineVisible: false,
       lastValueVisible: true,
-      // Force the [0, 100] range here — autoScale=false above isn't enough
-      // on its own; we still need explicit margins to keep the band fixed.
       priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
     });
 
-    // Three horizontal reference lines: oversold (30), neutral (50),
-    // overbought (70). Drawn on the RSI series so they share its scale.
     referenceLines.push(
       rsiSeries.createPriceLine({
         price: 70,
@@ -110,17 +113,10 @@
     );
   }
 
-  /**
-   * Render from the shared evaluation cache. RSI series and the
-   * divergence flag are both produced by `evaluation.svelte.ts`'s
-   * `recompute()` — this panel just renders them.
-   */
   function renderFromCache(): void {
     if (!chart || !rsiSeries) return;
 
-    const rsi = evalState.rsi;
-
-    if (rsi.length === 0) {
+    if (!slice || slice.rsi.length === 0) {
       hasData = false;
       latestRsi = null;
       divergence = { bearish: false, bullish: false, description: '' };
@@ -128,6 +124,7 @@
       return;
     }
 
+    const rsi = slice.rsi;
     loadError = null;
     rsiSeries.setData(
       rsi.map((p) => ({
@@ -137,13 +134,11 @@
     );
 
     latestRsi = rsi[rsi.length - 1].value;
-    divergence = evalState.divergence ?? { bearish: false, bullish: false, description: '' };
+    divergence = slice.divergence ?? { bearish: false, bullish: false, description: '' };
     hasData = true;
     chart.timeScale().fitContent();
   }
 
-  // Color and label for the current RSI reading. Keep thresholds aligned
-  // with the reference lines (30 / 50 / 70).
   function rsiBadge(v: number | null): { color: string; label: string } {
     if (v == null) return { color: COLORS.neutral, label: '' };
     if (v > 70) return { color: '#ef5350', label: 'overbought' };
@@ -181,10 +176,11 @@
     };
   });
 
-  // Re-render whenever the shared evaluation cache refreshes.
   $effect(() => {
-    const _gen = evalState.generation;
+    const _gen = slice?.generation ?? 0;
+    const _ticker = activePosition?.ticker ?? '';
     void _gen;
+    void _ticker;
     if (chart) {
       renderFromCache();
     }
@@ -214,17 +210,23 @@
     </div>
   </header>
 
-  {#if loadError}
-    <div class="banner error" role="alert">RSI load failed: {loadError}</div>
-  {/if}
-
-  <div class="chart-wrapper">
-    <div class="chart-container" bind:this={chartContainer}></div>
-
-    {#if !hasData}
-      <div class="placeholder">No RSI data yet — fetch some history first.</div>
+  {#if !activePosition}
+    <div class="placeholder-static">
+      Select a position from the tabs above to view its RSI.
+    </div>
+  {:else}
+    {#if loadError}
+      <div class="banner error" role="alert">RSI load failed: {loadError}</div>
     {/if}
-  </div>
+
+    <div class="chart-wrapper">
+      <div class="chart-container" bind:this={chartContainer}></div>
+
+      {#if !hasData}
+        <div class="placeholder">No RSI data yet — fetch some history first.</div>
+      {/if}
+    </div>
+  {/if}
 </section>
 
 <style>
@@ -323,6 +325,16 @@
     font-size: 13px;
     pointer-events: none;
     border-radius: 4px;
+  }
+
+  .placeholder-static {
+    padding: 24px;
+    background: rgba(15, 20, 25, 0.6);
+    border: 1px dashed #3a3d4a;
+    border-radius: 6px;
+    color: #9ca3af;
+    text-align: center;
+    font-size: 13px;
   }
 
   .banner {

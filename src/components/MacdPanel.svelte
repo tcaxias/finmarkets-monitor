@@ -1,9 +1,7 @@
 <script lang="ts">
-  // MACD(12, 26, 9) chart: MACD line + signal line + histogram, with a
-  // crossover badge when the most recent bar flipped sign.
+  // MACD(12, 26, 9) chart for the active position.
   //
-  // Like RsiPanel, this is its own Lightweight Charts instance — we'll
-  // wire cross-pane time-axis sync in M7.
+  // Phase A multi-ticker rewrite: reads from `getEval(activeTicker)`.
   import {
     createChart,
     LineSeries,
@@ -18,7 +16,8 @@
     type HistogramData,
   } from 'lightweight-charts';
 
-  import { evalState } from '../lib/evaluation.svelte';
+  import { evalState, getEval } from '../lib/evaluation.svelte';
+  import { settings, getActivePosition } from '../lib/settings.svelte';
   import type { MacdPoint } from '../lib/indicators';
 
   let chartContainer: HTMLDivElement | undefined = $state();
@@ -33,6 +32,18 @@
   let loadError = $state<string | null>(null);
   let latest = $state<MacdPoint | null>(null);
   let crossover = $state<'bullish' | 'bearish' | null>(null);
+
+  const activePosition = $derived.by(() => {
+    settings.activePositionId;
+    settings.positions.length;
+    return getActivePosition();
+  });
+
+  const slice = $derived.by(() => {
+    if (!activePosition) return null;
+    void evalState.byTicker;
+    return getEval(activePosition.ticker);
+  });
 
   const COLORS = {
     bg: '#0f1419',
@@ -63,14 +74,9 @@
       timeScale: { borderColor: COLORS.border, timeVisible: false },
     });
 
-    // Histogram first so the lines render above it. All three series share
-    // the same right price scale — MACD/signal/hist are all in price-delta
-    // units and overlay naturally.
     histSeries = chart.addSeries(HistogramSeries, {
       priceLineVisible: false,
       lastValueVisible: false,
-      // No `priceFormat: {type:'volume'}` here — that would round to whole
-      // numbers, which destroys MACD histogram precision (typically ~0.01).
     });
 
     macdSeries = chart.addSeries(LineSeries, {
@@ -89,8 +95,6 @@
       lastValueVisible: true,
     });
 
-    // Zero reference line — anchors the eye to "MACD above/below zero",
-    // which matters as much as MACD-vs-signal.
     zeroLine = macdSeries.createPriceLine({
       price: 0,
       color: COLORS.zero,
@@ -101,11 +105,6 @@
     });
   }
 
-  /**
-   * Detect a sign-flip in (macd - signal) between the last two bars.
-   * Bullish: histogram crossed from negative to positive (MACD broke
-   * above signal). Bearish: the inverse. Anything else returns null.
-   */
   function detectCrossover(macd: MacdPoint[]): 'bullish' | 'bearish' | null {
     if (macd.length < 2) return null;
     const a = macd[macd.length - 2].histogram;
@@ -115,13 +114,10 @@
     return null;
   }
 
-  /** Render from the shared evaluation cache. */
   function renderFromCache(): void {
     if (!chart || !macdSeries || !signalSeries || !histSeries) return;
 
-    const macd = evalState.macd;
-
-    if (macd.length === 0) {
+    if (!slice || slice.macd.length === 0) {
       hasData = false;
       latest = null;
       crossover = null;
@@ -131,6 +127,7 @@
       return;
     }
 
+    const macd = slice.macd;
     loadError = null;
     macdSeries.setData(
       macd.map((p) => ({ time: p.time as UTCTimestamp, value: p.macd })) as LineData[],
@@ -182,8 +179,10 @@
   });
 
   $effect(() => {
-    const _gen = evalState.generation;
+    const _gen = slice?.generation ?? 0;
+    const _ticker = activePosition?.ticker ?? '';
     void _gen;
+    void _ticker;
     if (chart) {
       renderFromCache();
     }
@@ -225,17 +224,23 @@
     </div>
   </header>
 
-  {#if loadError}
-    <div class="banner error" role="alert">MACD load failed: {loadError}</div>
-  {/if}
-
-  <div class="chart-wrapper">
-    <div class="chart-container" bind:this={chartContainer}></div>
-
-    {#if !hasData}
-      <div class="placeholder">No MACD data yet — fetch some history first.</div>
+  {#if !activePosition}
+    <div class="placeholder-static">
+      Select a position from the tabs above to view its MACD.
+    </div>
+  {:else}
+    {#if loadError}
+      <div class="banner error" role="alert">MACD load failed: {loadError}</div>
     {/if}
-  </div>
+
+    <div class="chart-wrapper">
+      <div class="chart-container" bind:this={chartContainer}></div>
+
+      {#if !hasData}
+        <div class="placeholder">No MACD data yet — fetch some history first.</div>
+      {/if}
+    </div>
+  {/if}
 </section>
 
 <style>
@@ -335,6 +340,16 @@
     font-size: 13px;
     pointer-events: none;
     border-radius: 4px;
+  }
+
+  .placeholder-static {
+    padding: 24px;
+    background: rgba(15, 20, 25, 0.6);
+    border: 1px dashed #3a3d4a;
+    border-radius: 6px;
+    color: #9ca3af;
+    text-align: center;
+    font-size: 13px;
   }
 
   .banner {

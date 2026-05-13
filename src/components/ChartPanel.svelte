@@ -1,8 +1,11 @@
 <script lang="ts">
   // Lightweight Charts v5 — note the v5 API uses `addSeries(SeriesDef, opts)`
-  // with imported series definition constants (CandlestickSeries,
-  // HistogramSeries, LineSeries) instead of the v4 `addCandlestickSeries()`
-  // shorthand methods. Reference: https://tradingview.github.io/lightweight-charts/docs/series-types
+  // with imported series definition constants instead of v4's shorthand
+  // methods.
+  //
+  // Phase A multi-ticker rewrite: reads from `getEval(activeTicker)` and
+  // computes thresholds from the active position's vest data. Renders a
+  // placeholder when no position is active.
   import {
     createChart,
     CandlestickSeries,
@@ -19,9 +22,9 @@
     type HistogramData,
   } from 'lightweight-charts';
 
-  import { settings } from '../lib/settings.svelte';
+  import { settings, getActivePosition } from '../lib/settings.svelte';
   import { computeThresholds, type Thresholds } from '../lib/math';
-  import { evalState } from '../lib/evaluation.svelte';
+  import { evalState, getEval } from '../lib/evaluation.svelte';
 
   let chartContainer: HTMLDivElement | undefined = $state();
   let chart: IChartApi | undefined;
@@ -34,6 +37,18 @@
 
   let hasData = $state(false);
   let loadError = $state<string | null>(null);
+
+  const activePosition = $derived.by(() => {
+    settings.activePositionId;
+    settings.positions.length;
+    return getActivePosition();
+  });
+
+  const slice = $derived.by(() => {
+    if (!activePosition) return null;
+    void evalState.byTicker;
+    return getEval(activePosition.ticker);
+  });
 
   const COLORS = {
     bg: '#0f1419',
@@ -91,9 +106,6 @@
       lastValueVisible: false,
     });
 
-    // Volume overlay: empty `priceScaleId` makes this an overlay scale (the
-    // canonical Lightweight Charts pattern). We then push it to the bottom
-    // 30% of the pane via scaleMargins.
     volumeSeries = chart.addSeries(HistogramSeries, {
       priceFormat: { type: 'volume' },
       priceScaleId: '',
@@ -105,26 +117,14 @@
     });
   }
 
-  /**
-   * Render the chart from the shared evaluation cache (`evalState`). The
-   * cache is the single source of truth for series data — this panel is
-   * pure rendering, with no DB queries of its own. App.svelte triggers
-   * `recompute()` when the ticker changes or new data arrives, which
-   * bumps `evalState.generation` and lets us know to re-render.
-   */
+  /** Render the chart from the active position's slice of the eval cache. */
   function renderFromCache(): void {
     if (!chart || !candleSeries || !sma20Series || !sma200Series || !volumeSeries) {
       return;
     }
 
-    const candles = evalState.candles;
-    const sma20 = evalState.sma20;
-    const sma200 = evalState.sma200;
-    const vol = evalState.volume;
-
-    if (candles.length === 0) {
+    if (!slice || slice.candles.length === 0) {
       hasData = false;
-      // Setting empty arrays clears the series cleanly.
       candleSeries.setData([]);
       sma20Series.setData([]);
       sma200Series.setData([]);
@@ -132,9 +132,12 @@
       return;
     }
 
+    const candles = slice.candles;
+    const sma20 = slice.sma20;
+    const sma200 = slice.sma200;
+    const vol = slice.volume;
+
     loadError = null;
-    // The `time as UTCTimestamp` cast is required by Lightweight Charts'
-    // nominal-typed time field; queries.ts guarantees unix-second numbers.
     candleSeries.setData(
       candles.map((c) => ({ ...c, time: c.time as UTCTimestamp })) as CandlestickData[],
     );
@@ -144,9 +147,6 @@
     sma200Series.setData(
       sma200.map((p) => ({ ...p, time: p.time as UTCTimestamp })) as LineData[],
     );
-    // VolumeBar.value can be null when the source row had no volume.
-    // Lightweight Charts doesn't render gaps for null cleanly in a
-    // histogram series — just omit those bars.
     volumeSeries.setData(
       vol
         .filter((v): v is { time: number; value: number; color: string } => v.value !== null)
@@ -168,8 +168,6 @@
   function applyPriceLines(thresholds: Thresholds): void {
     if (!candleSeries) return;
     clearPriceLines();
-    // Skip rendering when the user hasn't entered a vest price yet — drawing
-    // lines at $0 just clutters the chart.
     if (!Number.isFinite(thresholds.pbreakeven) || thresholds.pbreakeven <= 0) {
       return;
     }
@@ -213,13 +211,15 @@
     });
     resizeObserver.observe(chartContainer);
 
-    // Initial paint: render whatever the shared cache already has. The
-    // App.svelte recompute effect will trigger again if/when the cache
-    // updates and bumps `generation`, which the second $effect below
-    // observes.
     renderFromCache();
-    const t = computeThresholds(settings.vestPrice, settings.shares, settings.taxRate);
-    applyPriceLines(t);
+    if (activePosition) {
+      const t = computeThresholds(
+        activePosition.vestPrice,
+        activePosition.shares,
+        activePosition.taxRate,
+      );
+      applyPriceLines(t);
+    }
 
     return () => {
       resizeObserver?.disconnect();
@@ -234,22 +234,27 @@
     };
   });
 
-  // Re-render whenever the shared evaluation cache refreshes. We watch
-  // `evalState.generation` (bumped at the end of every successful
-  // `recompute()`) instead of every individual array reference — that
-  // way one effect handles "ticker changed", "new data fetched", and
-  // any future reasons the cache might rebuild.
+  // Re-render whenever the active position's slice generation bumps OR
+  // the active position itself changes (different ticker → different slice).
   $effect(() => {
-    const _gen = evalState.generation;
+    const _gen = slice?.generation ?? 0;
+    const _ticker = activePosition?.ticker ?? '';
     void _gen;
+    void _ticker;
     if (chart) {
       renderFromCache();
     }
   });
 
-  // Recompute price lines whenever any threshold input changes.
+  // Recompute price lines whenever any threshold input changes on the
+  // active position.
   $effect(() => {
-    const t = computeThresholds(settings.vestPrice, settings.shares, settings.taxRate);
+    if (!activePosition) return;
+    const t = computeThresholds(
+      activePosition.vestPrice,
+      activePosition.shares,
+      activePosition.taxRate,
+    );
     if (chart && candleSeries) {
       applyPriceLines(t);
     }
@@ -259,19 +264,25 @@
 <section class="chart-panel">
   <h2>Chart</h2>
 
-  {#if loadError}
-    <div class="banner error" role="alert">Chart load failed: {loadError}</div>
-  {/if}
-
-  <div class="chart-wrapper">
-    <div class="chart-container" bind:this={chartContainer}></div>
-
-    {#if !hasData}
-      <div class="placeholder">
-        No data — click <strong>Refresh data</strong> to fetch.
-      </div>
+  {#if !activePosition}
+    <div class="placeholder-static">
+      Select a position from the tabs above to view its chart.
+    </div>
+  {:else}
+    {#if loadError}
+      <div class="banner error" role="alert">Chart load failed: {loadError}</div>
     {/if}
-  </div>
+
+    <div class="chart-wrapper">
+      <div class="chart-container" bind:this={chartContainer}></div>
+
+      {#if !hasData}
+        <div class="placeholder">
+          No data — click <strong>Refresh data</strong> to fetch.
+        </div>
+      {/if}
+    </div>
+  {/if}
 </section>
 
 <style>
@@ -316,6 +327,16 @@
     font-size: 14px;
     pointer-events: none;
     border-radius: 4px;
+  }
+
+  .placeholder-static {
+    padding: 40px;
+    background: rgba(15, 20, 25, 0.6);
+    border: 1px dashed #3a3d4a;
+    border-radius: 6px;
+    color: #9ca3af;
+    text-align: center;
+    font-size: 13px;
   }
 
   .banner {

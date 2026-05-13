@@ -1,47 +1,82 @@
 // Data pipeline: fetch from Twelve Data → persist into DuckDB → expose reactive state.
+//
+// Phase A multi-ticker rewrite: `refreshData` and `refreshState` now take
+// a ticker argument explicitly. The reactive `dataState` keeps a single
+// "last operation" view (loading/error/lastFetched) plus a per-ticker
+// row-count map so the DataPanel can show progress for "Refresh all"
+// without each per-ticker view fighting for the same scalar fields.
+//
 // Uses Svelte 5 runes — file must end in `.svelte.ts`.
 
 import { settings } from './settings.svelte';
 import { ensureSchema, getConn } from './duckdb';
 import { fetchDailyOhlcv, TwelveDataError, type OhlcvRow } from './twelvedata';
 
-export const dataState = $state({
+export interface DataState {
+  loading: boolean;
+  /** Most recent successful refresh time across all tickers. */
+  lastFetched: Date | null;
+  /** Per-ticker row count in DuckDB; populated lazily on first refreshState. */
+  rowCount: Record<string, number>;
+  /** Per-ticker latest fetch timestamp from fetch_log (ok status). */
+  lastFetchedByTicker: Record<string, Date | null>;
+  /** Per-ticker latest close + date for footer/data panel display. */
+  latestCloseByTicker: Record<string, number | null>;
+  latestDateByTicker: Record<string, string | null>;
+  error: string | null;
+  /** Progress for multi-position refresh; null when idle or single-ticker. */
+  refreshProgress: { current: number; total: number; ticker: string } | null;
+}
+
+export const dataState = $state<DataState>({
   loading: false,
-  lastFetched: null as Date | null,
-  rowCount: 0,
-  latestClose: null as number | null,
-  latestDate: null as string | null,
-  error: null as string | null,
+  lastFetched: null,
+  rowCount: {},
+  lastFetchedByTicker: {},
+  latestCloseByTicker: {},
+  latestDateByTicker: {},
+  error: null,
+  refreshProgress: null,
 });
 
 // Debounce: prevent runaway clicks against an 8-req/min free tier.
 const REFRESH_COOLDOWN_MS = 10_000;
 let lastRefreshAt = 0;
 
+// Twelve Data free-tier rate limit. Spacing requests by ~8s keeps us
+// under 8 requests per rolling 60s window with a small safety margin.
+const RATE_LIMIT_SPACING_MS = 8_000;
+const RATE_LIMIT_FREE_THRESHOLD = 7; // up to this many positions = no spacing
+
 export function refreshCooldownRemainingMs(): number {
   const elapsed = Date.now() - lastRefreshAt;
   return Math.max(0, REFRESH_COOLDOWN_MS - elapsed);
 }
 
-export async function refreshData(): Promise<void> {
-  if (dataState.loading) return;
+/**
+ * Refresh a single ticker. Validates inputs, respects the cooldown, and
+ * keeps `dataState` in sync. Returns `true` on success, `false` on any
+ * validated failure (cooldown, missing key/ticker, fetch error).
+ */
+export async function refreshData(tickerArg?: string): Promise<boolean> {
+  if (dataState.loading) return false;
 
   const remaining = refreshCooldownRemainingMs();
   if (remaining > 0) {
     dataState.error = `Please wait ${Math.ceil(remaining / 1000)}s before refreshing again.`;
-    return;
+    return false;
   }
 
-  const ticker = settings.ticker.trim();
+  const ticker = (tickerArg ?? '').trim().toUpperCase();
   const apiKey = settings.apiKey.trim();
 
   if (!apiKey) {
     dataState.error = 'API key is required. Add one in Settings.';
-    return;
+    return false;
   }
   if (!ticker) {
-    dataState.error = 'Ticker is required. Set one in Settings.';
-    return;
+    dataState.error = 'Ticker is required.';
+    return false;
   }
 
   dataState.loading = true;
@@ -50,20 +85,18 @@ export async function refreshData(): Promise<void> {
 
   let rowsInserted = 0;
   let status = 'ok';
+  let ok = false;
 
   try {
     const { rows } = await fetchDailyOhlcv(ticker, apiKey, 500);
     rowsInserted = await insertRows(ticker, rows);
-    // logFetch is best-effort: a failure here MUST NOT mark the refresh
-    // as failed when the data was inserted successfully. The audit log
-    // is informational; the user-visible state should reflect what's in
-    // the data table.
     try {
       await logFetch(ticker, rowsInserted, status);
     } catch (logErr) {
       console.warn('Failed to write fetch_log (non-fatal):', logErr);
     }
-    await refreshState();
+    await refreshState(ticker);
+    ok = true;
   } catch (err) {
     status = 'error';
     if (err instanceof TwelveDataError) {
@@ -71,7 +104,6 @@ export async function refreshData(): Promise<void> {
     } else {
       dataState.error = err instanceof Error ? err.message : String(err);
     }
-    // Best-effort log of the failure; never let logging mask the original error.
     try {
       await logFetch(ticker, 0, status);
     } catch (logErr) {
@@ -80,15 +112,57 @@ export async function refreshData(): Promise<void> {
   } finally {
     dataState.loading = false;
   }
+  return ok;
+}
+
+/**
+ * Refresh every configured position sequentially, with rate-limit-aware
+ * spacing (~8s between calls when there are more than 7 positions, since
+ * Twelve Data's free tier is 8 req/min).
+ *
+ * Reports progress through `dataState.refreshProgress` so the DataPanel
+ * can show "Refreshing 2/4: AAPL…". Cooldown is bypassed between calls
+ * within this batch — the spacing replaces it.
+ */
+export async function refreshAll(): Promise<void> {
+  if (dataState.loading) return;
+  const apiKey = settings.apiKey.trim();
+  if (!apiKey) {
+    dataState.error = 'API key is required. Add one in Settings.';
+    return;
+  }
+  const tickers = settings.positions.map((p) => p.ticker.trim().toUpperCase()).filter(Boolean);
+  if (tickers.length === 0) {
+    dataState.error = 'No positions configured. Add one in the Positions panel.';
+    return;
+  }
+
+  const needsSpacing = tickers.length > RATE_LIMIT_FREE_THRESHOLD;
+  dataState.refreshProgress = { current: 0, total: tickers.length, ticker: tickers[0] };
+  dataState.error = null;
+
+  for (let i = 0; i < tickers.length; i++) {
+    const t = tickers[i];
+    dataState.refreshProgress = { current: i + 1, total: tickers.length, ticker: t };
+    // Force-refresh by resetting the cooldown clock — the explicit spacing
+    // below handles rate limiting for the batch case.
+    lastRefreshAt = 0;
+    await refreshData(t);
+    if (needsSpacing && i < tickers.length - 1) {
+      await sleep(RATE_LIMIT_SPACING_MS);
+    }
+  }
+
+  dataState.refreshProgress = null;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
  * Insert rows using a prepared statement inside a transaction. INSERT OR REPLACE
  * keeps the latest fetch authoritative when the same (ticker, dt) is fetched twice.
- *
- * For ~500 rows this is well within DuckDB-WASM's prepared-statement budget; we
- * could collapse to a single multi-row VALUES list but the per-row prepare avoids
- * SQL-injection risk and keeps the code straightforward.
  */
 async function insertRows(ticker: string, rows: OhlcvRow[]): Promise<number> {
   if (rows.length === 0) return 0;
@@ -144,68 +218,68 @@ async function logFetch(
 }
 
 /**
- * Recompute derived state from the database. Cheap; safe to call after any
- * mutation or on initial load to surface previously-persisted OPFS data.
+ * Recompute derived state for one ticker from the database. When called
+ * without a ticker, refreshes all configured positions (used on app boot
+ * to pull persisted OPFS data into reactive state).
  */
-export async function refreshState(): Promise<void> {
+export async function refreshState(tickerArg?: string): Promise<void> {
   await ensureSchema();
   const conn = await getConn();
-  const ticker = settings.ticker.trim();
 
-  if (!ticker) {
-    dataState.rowCount = 0;
-    dataState.latestClose = null;
-    dataState.latestDate = null;
-    dataState.lastFetched = null;
-    return;
-  }
+  const tickers = tickerArg
+    ? [tickerArg.trim().toUpperCase()].filter(Boolean)
+    : settings.positions.map((p) => p.ticker.trim().toUpperCase()).filter(Boolean);
 
-  // One round-trip: get count, latest date, and latest close together.
-  // Avoids passing a JS-formatted date back into a parameterized DATE column,
-  // which DuckDB-WASM can reject as "invalid date" depending on Arrow encoding.
-  const stmt = await conn.prepare(
-    `SELECT
-       (SELECT COUNT(*)::INTEGER FROM ohlcv WHERE ticker = ?) AS row_count,
-       (SELECT dt FROM ohlcv WHERE ticker = ? ORDER BY dt DESC LIMIT 1) AS latest_dt,
-       (SELECT close FROM ohlcv WHERE ticker = ? ORDER BY dt DESC LIMIT 1) AS latest_close`,
-  );
-  let row:
-    | { row_count: number; latest_dt: unknown; latest_close: unknown }
-    | undefined;
-  try {
-    const tbl = await stmt.query(ticker, ticker, ticker);
-    row = tbl.toArray().map((r) => ({ ...r.toJSON() }))[0] as
+  for (const ticker of tickers) {
+    const stmt = await conn.prepare(
+      `SELECT
+         (SELECT COUNT(*)::INTEGER FROM ohlcv WHERE ticker = ?) AS row_count,
+         (SELECT dt FROM ohlcv WHERE ticker = ? ORDER BY dt DESC LIMIT 1) AS latest_dt,
+         (SELECT close FROM ohlcv WHERE ticker = ? ORDER BY dt DESC LIMIT 1) AS latest_close`,
+    );
+    let row:
       | { row_count: number; latest_dt: unknown; latest_close: unknown }
       | undefined;
-  } finally {
-    await stmt.close();
-  }
+    try {
+      const tbl = await stmt.query(ticker, ticker, ticker);
+      row = tbl.toArray().map((r) => ({ ...r.toJSON() }))[0] as
+        | { row_count: number; latest_dt: unknown; latest_close: unknown }
+        | undefined;
+    } finally {
+      await stmt.close();
+    }
 
-  const rowCount = Number(row?.row_count ?? 0);
-  dataState.rowCount = rowCount;
+    const rowCount = Number(row?.row_count ?? 0);
+    dataState.rowCount[ticker] = rowCount;
+    if (rowCount > 0 && row) {
+      dataState.latestDateByTicker[ticker] = formatDate(row.latest_dt);
+      dataState.latestCloseByTicker[ticker] =
+        row.latest_close == null ? null : Number(row.latest_close);
+    } else {
+      dataState.latestCloseByTicker[ticker] = null;
+      dataState.latestDateByTicker[ticker] = null;
+    }
 
-  if (rowCount > 0 && row) {
-    dataState.latestDate = formatDate(row.latest_dt);
-    dataState.latestClose = row.latest_close == null ? null : Number(row.latest_close);
-  } else {
-    dataState.latestClose = null;
-    dataState.latestDate = null;
-  }
-
-  // Most-recent successful fetch from the audit log.
-  const logStmt = await conn.prepare(
-    `SELECT fetched_at FROM fetch_log
-     WHERE ticker = ? AND status = 'ok'
-     ORDER BY fetched_at DESC LIMIT 1`,
-  );
-  try {
-    const tbl = await logStmt.query(ticker);
-    const row = tbl.toArray().map((r) => ({ ...r.toJSON() }))[0] as
-      | { fetched_at: unknown }
-      | undefined;
-    dataState.lastFetched = row ? toDate(row.fetched_at) : null;
-  } finally {
-    await logStmt.close();
+    const logStmt = await conn.prepare(
+      `SELECT fetched_at FROM fetch_log
+       WHERE ticker = ? AND status = 'ok'
+       ORDER BY fetched_at DESC LIMIT 1`,
+    );
+    try {
+      const tbl = await logStmt.query(ticker);
+      const r = tbl.toArray().map((row) => ({ ...row.toJSON() }))[0] as
+        | { fetched_at: unknown }
+        | undefined;
+      const d = r ? toDate(r.fetched_at) : null;
+      dataState.lastFetchedByTicker[ticker] = d;
+      // Bump the "global" lastFetched watermark so consumers tracking it as
+      // a single reactivity dep still re-render when any ticker refreshes.
+      if (d && (!dataState.lastFetched || d.getTime() > dataState.lastFetched.getTime())) {
+        dataState.lastFetched = d;
+      }
+    } finally {
+      await logStmt.close();
+    }
   }
 }
 
@@ -213,9 +287,6 @@ export async function clearCache(): Promise<void> {
   const conn = await getConn();
   await conn.query('DROP TABLE IF EXISTS ohlcv');
   await conn.query('DROP TABLE IF EXISTS fetch_log');
-  // Reset memoized schema bootstrap so the next call recreates the tables.
-  // We re-run the DDL here directly so callers don't need to know about the
-  // memoization detail.
   await conn.query(`
     CREATE TABLE IF NOT EXISTS ohlcv (
       ticker VARCHAR NOT NULL,
@@ -236,6 +307,12 @@ export async function clearCache(): Promise<void> {
       status VARCHAR NOT NULL
     );
   `);
+  // Reset all per-ticker tracking — the tables are now empty.
+  dataState.rowCount = {};
+  dataState.lastFetchedByTicker = {};
+  dataState.latestCloseByTicker = {};
+  dataState.latestDateByTicker = {};
+  dataState.lastFetched = null;
   await refreshState();
 }
 
@@ -247,18 +324,11 @@ function formatDate(v: unknown): string {
     return Number.isFinite(v.getTime()) ? v.toISOString().slice(0, 10) : '';
   }
   if (typeof v === 'string') {
-    // Already-ISO date; trim time portion if present.
     const trimmed = v.trim();
-    // Validate it parses to a real date before trusting it.
     const parsed = new Date(trimmed);
     if (!Number.isNaN(parsed.getTime())) return trimmed.slice(0, 10);
     return '';
   }
-  // DuckDB DATE via Arrow comes back as either:
-  //   - number = days since 1970-01-01
-  //   - bigint = same, or sometimes ms-since-epoch in some Arrow versions
-  // Heuristic: any value > ~1e6 is too large to be days (would be year ~4700+),
-  // so treat it as ms. Anything smaller is days.
   if (typeof v === 'number' || typeof v === 'bigint') {
     const n = Number(v);
     if (!Number.isFinite(n)) return '';

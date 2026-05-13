@@ -1,28 +1,12 @@
 <script lang="ts">
-  // Sunday weekly-review export panel. Renders a "Generate" button that
-  // reads the precomputed series + witness summary from `evalState` and
-  // produces a pre-filled markdown document mirroring
-  // `~/docs/finmarkets/aapl-weekly-review.md`.
+  // Sunday weekly-review export panel for the active position.
   //
-  // The generated markdown is shown in a read-only textarea so the user
-  // can scroll through it before copying or downloading. Two action
-  // buttons:
-  //   - Copy to clipboard (uses navigator.clipboard.writeText)
-  //   - Download .md (Blob + anchor click)
-  //
-  // Reactivity: when `dataState.lastFetched` or `settings.ticker` changes
-  // after the user has generated a review, we mark the on-screen review
-  // as "Stale" so the user knows to regenerate. We don't auto-regenerate
-  // because the markdown can be long and the user should make an
-  // explicit choice (and may have copied it already).
-  //
-  // M7 refactor: previously this panel ran its own queries. It now reads
-  // from `evalState`, the shared cache populated by App's recompute
-  // effect — same data the WitnessPanel and StatusBanner see.
+  // Phase A multi-ticker rewrite: reads from `getEval(activeTicker)` and
+  // uses the active position's ticker, vest data, and tax due date.
 
-  import { settings } from '../lib/settings.svelte';
+  import { settings, getActivePosition } from '../lib/settings.svelte';
   import { dataState } from '../lib/data.svelte';
-  import { evalState } from '../lib/evaluation.svelte';
+  import { evalState, getEval } from '../lib/evaluation.svelte';
   import { computeThresholds } from '../lib/math';
   import { generateSundayReview } from '../lib/sundayReview';
 
@@ -30,35 +14,50 @@
   let generating = $state(false);
   let loadError = $state<string | null>(null);
   let copyFeedback = $state<string>('');
-  // Snapshot of the data state at generation time. We compare against
-  // current state in `$derived` to know when the on-screen review is stale.
   let generatedAtFetch = $state<Date | null>(null);
   let generatedAtTicker = $state<string>('');
 
-  const canGenerate = $derived(
-    !generating &&
-      settings.ticker.trim() !== '' &&
-      dataState.rowCount > 0 &&
-      evalState.summary !== null,
+  const activePosition = $derived.by(() => {
+    settings.activePositionId;
+    settings.positions.length;
+    return getActivePosition();
+  });
+
+  const slice = $derived.by(() => {
+    if (!activePosition) return null;
+    void evalState.byTicker;
+    return getEval(activePosition.ticker);
+  });
+
+  const ticker = $derived(activePosition?.ticker ?? '');
+  const rowCount = $derived(ticker ? (dataState.rowCount[ticker] ?? 0) : 0);
+  const tickerLastFetched = $derived(
+    ticker ? (dataState.lastFetchedByTicker[ticker] ?? null) : null,
   );
 
-  // Stale when the underlying data has changed since the last generation.
-  // Treated as "stale" only after a review has been generated (not on
-  // first load); otherwise the badge would always show.
+  const canGenerate = $derived(
+    !generating &&
+      !!activePosition &&
+      ticker !== '' &&
+      rowCount > 0 &&
+      slice?.summary !== null &&
+      slice?.summary !== undefined,
+  );
+
   const stale = $derived(
     markdown !== '' &&
-      (generatedAtFetch?.getTime() !== dataState.lastFetched?.getTime() ||
-        generatedAtTicker !== settings.ticker),
+      (generatedAtFetch?.getTime() !== tickerLastFetched?.getTime() ||
+        generatedAtTicker !== ticker),
   );
 
   function onGenerate(): void {
-    const ticker = settings.ticker.trim();
+    if (!activePosition) return;
     if (!ticker) return;
-    if (!evalState.summary) {
+    if (!slice || !slice.summary) {
       loadError = 'No witness summary available — refresh data first.';
       return;
     }
-    if (evalState.candles.length === 0) {
+    if (slice.candles.length === 0) {
       loadError = 'No data available — fetch market data first.';
       return;
     }
@@ -69,26 +68,26 @@
 
     try {
       const thresholds = computeThresholds(
-        settings.vestPrice,
-        settings.shares,
-        settings.taxRate,
+        activePosition.vestPrice,
+        activePosition.shares,
+        activePosition.taxRate,
       );
 
       markdown = generateSundayReview({
         ticker,
         reviewDate: new Date(),
         thresholds,
-        taxDueDate: settings.taxDueDate || null,
-        candles: evalState.candles,
-        sma20: evalState.sma20,
-        sma200: evalState.sma200,
-        volume: evalState.volume,
-        rsi: evalState.rsi,
-        macd: evalState.macd,
-        witnesses: evalState.summary,
+        taxDueDate: activePosition.taxDueDate || null,
+        candles: slice.candles,
+        sma20: slice.sma20,
+        sma200: slice.sma200,
+        volume: slice.volume,
+        rsi: slice.rsi,
+        macd: slice.macd,
+        witnesses: slice.summary,
       });
 
-      generatedAtFetch = dataState.lastFetched;
+      generatedAtFetch = tickerLastFetched;
       generatedAtTicker = ticker;
     } catch (err) {
       loadError = err instanceof Error ? err.message : String(err);
@@ -103,7 +102,6 @@
     try {
       await navigator.clipboard.writeText(markdown);
       copyFeedback = 'Copied!';
-      // Clear the feedback after a short delay so it doesn't linger.
       setTimeout(() => {
         copyFeedback = '';
       }, 1500);
@@ -116,10 +114,8 @@
   function onDownload(): void {
     if (!markdown) return;
     const today = new Date().toISOString().slice(0, 10);
-    const ticker = (generatedAtTicker || settings.ticker).toLowerCase();
-    const filename = `${ticker}-review-${today}.md`;
-    // Standard Blob → object URL → anchor click pattern. Revoke the URL
-    // after the click to avoid leaking the blob.
+    const t = (generatedAtTicker || ticker).toLowerCase();
+    const filename = `${t}-review-${today}.md`;
     const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -142,41 +138,47 @@
     {/if}
   </header>
 
-  <p class="hint">
-    Generates a pre-filled markdown document mirroring the canonical weekly-review
-    template. Computed fields are auto-filled; judgment fields stay blank for you to
-    complete (~15 minutes).
-  </p>
-
-  <div class="row actions">
-    <button type="button" onclick={onGenerate} disabled={!canGenerate}>
-      {generating ? 'Generating…' : markdown ? 'Regenerate Sunday Review' : 'Generate Sunday Review'}
-    </button>
-    {#if markdown}
-      <button type="button" class="ghost" onclick={onCopy}>
-        Copy to clipboard
-      </button>
-      <button type="button" class="ghost" onclick={onDownload}>
-        Download .md
-      </button>
-      {#if copyFeedback}
-        <span class="copy-feedback" aria-live="polite">{copyFeedback}</span>
-      {/if}
-    {/if}
-  </div>
-
-  {#if loadError}
-    <div class="banner error" role="alert">{loadError}</div>
-  {/if}
-
-  {#if !markdown && !generating}
+  {#if !activePosition}
     <div class="placeholder">
-      Click "Generate Sunday Review" to produce a pre-filled markdown document.
+      Select a position from the tabs above to generate its weekly review.
     </div>
-  {/if}
+  {:else}
+    <p class="hint">
+      Generates a pre-filled markdown document mirroring the canonical weekly-review
+      template. Computed fields are auto-filled; judgment fields stay blank for you to
+      complete (~15 minutes).
+    </p>
 
-  {#if markdown}
-    <textarea readonly value={markdown} spellcheck="false"></textarea>
+    <div class="row actions">
+      <button type="button" onclick={onGenerate} disabled={!canGenerate}>
+        {generating ? 'Generating…' : markdown ? 'Regenerate Sunday Review' : 'Generate Sunday Review'}
+      </button>
+      {#if markdown}
+        <button type="button" class="ghost" onclick={onCopy}>
+          Copy to clipboard
+        </button>
+        <button type="button" class="ghost" onclick={onDownload}>
+          Download .md
+        </button>
+        {#if copyFeedback}
+          <span class="copy-feedback" aria-live="polite">{copyFeedback}</span>
+        {/if}
+      {/if}
+    </div>
+
+    {#if loadError}
+      <div class="banner error" role="alert">{loadError}</div>
+    {/if}
+
+    {#if !markdown && !generating}
+      <div class="placeholder">
+        Click "Generate Sunday Review" to produce a pre-filled markdown document.
+      </div>
+    {/if}
+
+    {#if markdown}
+      <textarea readonly value={markdown} spellcheck="false"></textarea>
+    {/if}
   {/if}
 </section>
 
@@ -313,7 +315,6 @@
     line-height: 1.5;
     resize: vertical;
     box-sizing: border-box;
-    /* Tabular numbers keep auto-filled values aligned in monospace. */
     font-variant-numeric: tabular-nums;
   }
 </style>

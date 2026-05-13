@@ -1,26 +1,31 @@
 <script lang="ts">
-  // Three-witness conviction widget — the most important "at a glance"
-  // output for a daily 60-second check. All the heavy lifting (verdict
-  // logic, conviction tally) lives in the pure functions in
-  // `src/lib/witnesses.ts`; the actual fetch + compute is centralized in
-  // `src/lib/evaluation.svelte.ts`. This component is pure presentation.
+  // Three-witness conviction widget for the active position.
   //
-  // M7 refactor: previously this panel ran its own DuckDB queries. It now
-  // reads from `evalState`, the shared cache populated by the App's
-  // recompute effect. That eliminates duplicated query work between this
-  // panel, ReviewExport, and StatusBanner.
+  // Phase A multi-ticker rewrite: reads from `getEval(activeTicker)` instead
+  // of the old singleton evalState. When no position is active (portfolio
+  // overview mode) renders a hint placeholder.
 
-  import { evalState } from '../lib/evaluation.svelte';
+  import { evalState, getEval } from '../lib/evaluation.svelte';
+  import { settings, getActivePosition } from '../lib/settings.svelte';
 
-  // Map verdict → dot color class. Kept as a function rather than a Map so
-  // unknown values fall through harmlessly to neutral.
+  const activePosition = $derived.by(() => {
+    settings.activePositionId;
+    settings.positions.length;
+    return getActivePosition();
+  });
+
+  const slice = $derived.by(() => {
+    if (!activePosition) return null;
+    void evalState.byTicker;
+    return getEval(activePosition.ticker);
+  });
+
   function dotClass(verdict: 'bullish' | 'bearish' | 'neutral'): string {
     if (verdict === 'bullish') return 'dot dot-bullish';
     if (verdict === 'bearish') return 'dot dot-bearish';
     return 'dot dot-neutral';
   }
 
-  // Title-case the verdict for display ("Bullish" not "bullish").
   function verdictLabel(verdict: 'bullish' | 'bearish' | 'neutral'): string {
     return verdict.charAt(0).toUpperCase() + verdict.slice(1);
   }
@@ -29,44 +34,46 @@
 <section class="witness-panel" id="witnesses">
   <header class="panel-header">
     <h2>Three-Witness Conviction</h2>
-    {#if evalState.loading}
+    {#if slice?.loading}
       <span class="status">Computing…</span>
     {/if}
   </header>
 
-  {#if evalState.error}
-    <div class="banner error" role="alert">Witness evaluation failed: {evalState.error}</div>
-  {/if}
-
-  {#if !evalState.summary}
+  {#if !activePosition}
+    <div class="placeholder">
+      Select a position from the tabs above to view its witnesses.
+    </div>
+  {:else if slice?.error}
+    <div class="banner error" role="alert">Witness evaluation failed: {slice.error}</div>
+  {:else if !slice?.summary}
     <div class="placeholder">Awaiting data — refresh to compute witnesses.</div>
   {:else}
     <div class="witness-rows">
       <div class="witness-row">
         <span class="witness-name">Trend</span>
-        <span class={dotClass(evalState.summary.trend.verdict)}></span>
-        <span class="verdict">{verdictLabel(evalState.summary.trend.verdict)}</span>
-        <span class="reason">{evalState.summary.trend.reason}</span>
+        <span class={dotClass(slice.summary.trend.verdict)}></span>
+        <span class="verdict">{verdictLabel(slice.summary.trend.verdict)}</span>
+        <span class="reason">{slice.summary.trend.reason}</span>
       </div>
 
       <div class="witness-row">
         <span class="witness-name">Volume</span>
-        <span class={dotClass(evalState.summary.volume.verdict)}></span>
-        <span class="verdict">{verdictLabel(evalState.summary.volume.verdict)}</span>
-        <span class="reason">{evalState.summary.volume.reason}</span>
+        <span class={dotClass(slice.summary.volume.verdict)}></span>
+        <span class="verdict">{verdictLabel(slice.summary.volume.verdict)}</span>
+        <span class="reason">{slice.summary.volume.reason}</span>
       </div>
 
       <div class="witness-row">
         <span class="witness-name">Indicators</span>
-        <span class={dotClass(evalState.summary.indicators.verdict)}></span>
-        <span class="verdict">{verdictLabel(evalState.summary.indicators.verdict)}</span>
-        <span class="reason">{evalState.summary.indicators.reason}</span>
+        <span class={dotClass(slice.summary.indicators.verdict)}></span>
+        <span class="verdict">{verdictLabel(slice.summary.indicators.verdict)}</span>
+        <span class="reason">{slice.summary.indicators.reason}</span>
       </div>
     </div>
 
-    <div class="conviction-box" data-conviction={evalState.summary.conviction}>
-      <div class="conviction-label">{evalState.summary.convictionLabel}</div>
-      <div class="conviction-recommendation">{evalState.summary.recommendation}</div>
+    <div class="conviction-box" data-conviction={slice.summary.conviction}>
+      <div class="conviction-label">{slice.summary.convictionLabel}</div>
+      <div class="conviction-recommendation">{slice.summary.recommendation}</div>
     </div>
   {/if}
 </section>
@@ -132,8 +139,6 @@
     gap: 8px;
   }
 
-  /* Grid layout keeps the dot, verdict, and reason aligned across the
-     three rows regardless of label/reason length. */
   .witness-row {
     display: grid;
     grid-template-columns: 100px 14px 80px 1fr;
@@ -187,8 +192,6 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* Conviction box is the headline output. Color-coded by direction with
-     intensity indicating high vs moderate. */
   .conviction-box {
     padding: 14px 16px;
     border-radius: 8px;
