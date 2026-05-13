@@ -13,7 +13,7 @@ export interface Settings {
 }
 
 const defaults: Settings = {
-  ticker: 'AAPL',
+  ticker: '',
   vestPrice: 0,
   shares: 0,
   taxRate: 0.45,

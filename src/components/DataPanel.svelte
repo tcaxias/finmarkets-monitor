@@ -1,6 +1,6 @@
 <script lang="ts">
   import { dataState, refreshData, clearCache } from '../lib/data.svelte';
-  import { isPersistent } from '../lib/duckdb';
+  import { runtimeState } from '../lib/runtimeState.svelte';
   import { settings } from '../lib/settings.svelte';
 
   let clearing = $state(false);
@@ -70,8 +70,8 @@
     </dd>
 
     <dt>Storage</dt>
-    <dd class="storage" data-persistent={isPersistent}>
-      {#if isPersistent}
+    <dd class="storage" data-persistent={runtimeState.isPersistent}>
+      {#if runtimeState.isPersistent}
         Persistent (OPFS)
       {:else}
         In-memory (data will not survive reload)

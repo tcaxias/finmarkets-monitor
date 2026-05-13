@@ -58,7 +58,7 @@
 
       <label>
         <span>Ticker</span>
-        <input type="text" bind:value={settings.ticker} placeholder="AAPL" autocomplete="off" />
+        <input type="text" bind:value={settings.ticker} placeholder="e.g. AAPL, AAPL, NVDA" autocomplete="off" />
       </label>
 
       <label>

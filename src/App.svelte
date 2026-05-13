@@ -61,11 +61,11 @@
     }
   });
 
-  // Dynamic document title: "AAPL $20.97 — Monitor". Updates as the latest
+  // Dynamic document title: "<TICKER> $20.97 — Monitor". Updates as the latest
   // close changes, so a glance at the browser tab tells the user where price
   // is right now.
   $effect(() => {
-    const t = settings.ticker.trim().toUpperCase() || 'Monitor';
+    const t = settings.ticker.trim().toUpperCase() || 'Finmarkets';
     const price = evalState.latestClose;
     if (price !== null && Number.isFinite(price)) {
       document.title = `${t} $${price.toFixed(2)} — Monitor`;
@@ -78,7 +78,7 @@
 <div class="page">
   <header class="site-header">
     <div class="container narrow">
-      <h1>AAPL Monitor</h1>
+      <h1>{settings.ticker.trim().toUpperCase() || 'Finmarkets'} Monitor</h1>
       <p class="subtitle">Personal reference tool</p>
       <p class="db-status" data-status={dbStatus}>
         {#if dbStatus === 'loading'}

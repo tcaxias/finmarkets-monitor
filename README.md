@@ -1,8 +1,7 @@
 # Finmarkets Monitor
 
 Personal browser-based tool for monitoring a single equity position with a tax-overhang
-exit framework. Built for monitoring an AAPL RSU position but applicable to any single
-equity.
+exit framework. Generic — works with any single equity ticker supported by Twelve Data.
 
 ## Stack
 

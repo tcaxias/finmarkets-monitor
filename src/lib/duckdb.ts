@@ -14,6 +14,7 @@ import * as duckdb from '@duckdb/duckdb-wasm';
 
 import mvp_worker from '@duckdb/duckdb-wasm/dist/duckdb-browser-mvp.worker.js?url';
 import eh_worker from '@duckdb/duckdb-wasm/dist/duckdb-browser-eh.worker.js?url';
+import { runtimeState } from './runtimeState.svelte';
 
 // Keep this version in sync with the installed @duckdb/duckdb-wasm in package.json.
 // If you bump the npm dependency, also bump this constant. Mismatch = subtle ABI bugs.
@@ -40,8 +41,12 @@ let connPromise: Promise<duckdb.AsyncDuckDBConnection> | null = null;
 let schemaPromise: Promise<void> | null = null;
 
 // Whether the active database persists across reloads (OPFS) or is volatile.
-// Set during init; default false until proven persistent.
-export let isPersistent = false;
+// Re-exported as a getter so non-Svelte callers can still read it; the
+// Svelte-reactive source of truth is `runtimeState.isPersistent` from
+// runtimeState.svelte.ts.
+export function isPersistent(): boolean {
+  return runtimeState.isPersistent;
+}
 
 function opfsAvailable(): boolean {
   // OPFS lives on navigator.storage.getDirectory(). Some private-mode browsers
@@ -72,25 +77,25 @@ export async function getDb(): Promise<duckdb.AsyncDuckDB> {
           path: OPFS_DB_PATH,
           accessMode: duckdb.DuckDBAccessMode.READ_WRITE,
         });
-        isPersistent = true;
+        runtimeState.isPersistent = true;
       } catch (err) {
         console.warn(
           'OPFS persistence unavailable; falling back to in-memory DuckDB.',
           err,
         );
-        isPersistent = false;
+        runtimeState.isPersistent = false;
         // No explicit open() needed for in-memory — instantiate already gave us one.
       }
     } else {
       console.warn(
         'OPFS API not detected; using in-memory DuckDB (data will not survive reload).',
       );
-      isPersistent = false;
+      runtimeState.isPersistent = false;
     }
 
     const version = await db.getVersion();
     console.log(
-      `DuckDB ready (v${version}) — storage: ${isPersistent ? 'OPFS' : 'in-memory'}`,
+      `DuckDB ready (v${version}) — storage: ${runtimeState.isPersistent ? 'OPFS' : 'in-memory'}`,
     );
     return db;
   })();

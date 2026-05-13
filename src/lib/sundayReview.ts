@@ -1,6 +1,6 @@
 // Sunday weekly-review markdown generator.
 //
-// Produces a pre-filled version of the canonical AAPL weekly-review template
+// Produces a pre-filled version of the canonical weekly-review template
 // (`~/docs/finmarkets/aapl-weekly-review.md`). Computable fields — those
 // derivable from market data alone — are auto-filled. Judgment fields (the
 // tradeability gate, S/R levels, the decision section, calendar items, and
@@ -99,7 +99,7 @@ export function generateSundayReview(inputs: ReviewInputs): string {
   sections.push(section8Witnesses(inputs));
   sections.push(section9Decision());
   sections.push(section10Calendar());
-  sections.push(cognitiveIntegrity());
+  sections.push(cognitiveIntegrity(inputs.ticker));
   sections.push(redFlagTriggers(inputs));
   sections.push(autoFillSummary(inputs));
 
@@ -179,7 +179,7 @@ function section1Tradeability(): string {
     `If you can't trade this week, the analysis below is theoretical. Check before`,
     `investing 15 minutes:`,
     ``,
-    `- [ ] Currently inside issuer trading blackout window? If yes → skip to section 10 (calendar items only).`,
+    `- [ ] Currently inside an issuer trading blackout window? If yes → skip to section 10 (calendar items only).`,
     `- [ ] Earnings within next 30 days? Date: ______ (note: blackout starts ~2 weeks before)`,
     `- [ ] Any 10b5-1 plan currently active? [ ] yes  [ ] no`,
     `- [ ] Any insider designation that requires pre-clearance? [ ] yes  [ ] no`,
@@ -620,7 +620,7 @@ function section10Calendar(): string {
 
 // ---------- cognitive integrity ----------
 
-function cognitiveIntegrity(): string {
+function cognitiveIntegrity(ticker: string): string {
   return [
     `---`,
     ``,
@@ -630,7 +630,7 @@ function cognitiveIntegrity(): string {
     ``,
     `1. **Am I letting hope drive a "hold" decision?** [ ] yes  [ ] no — if yes, force a written justification using the framework above.`,
     `2. **Am I anchoring to the recent high or to my vest price?** [ ] yes  [ ] no — if yes, ignore both; only the forward distribution matters.`,
-    `3. **If ${'AAPL'} dropped 30% on Monday's open, would my plan still be viable?** [ ] yes  [ ] no — if no, I'm underhedged and need to act this week.`,
+    `3. **If ${ticker} dropped 30% on Monday's open, would my plan still be viable?** [ ] yes  [ ] no — if no, I'm underhedged and need to act this week.`,
     `4. **Have I confirmed I'm not in a blackout window?** [ ] yes  [ ] no — if no, do this before any action.`,
   ].join('\n');
 }

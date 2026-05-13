@@ -160,42 +160,33 @@ export async function refreshState(): Promise<void> {
     return;
   }
 
+  // One round-trip: get count, latest date, and latest close together.
+  // Avoids passing a JS-formatted date back into a parameterized DATE column,
+  // which DuckDB-WASM can reject as "invalid date" depending on Arrow encoding.
   const stmt = await conn.prepare(
     `SELECT
-       COUNT(*)::INTEGER AS row_count,
-       MAX(dt) AS latest_dt
-     FROM ohlcv
-     WHERE ticker = ?`,
+       (SELECT COUNT(*)::INTEGER FROM ohlcv WHERE ticker = ?) AS row_count,
+       (SELECT dt FROM ohlcv WHERE ticker = ? ORDER BY dt DESC LIMIT 1) AS latest_dt,
+       (SELECT close FROM ohlcv WHERE ticker = ? ORDER BY dt DESC LIMIT 1) AS latest_close`,
   );
-  let countRow: { row_count: number; latest_dt: unknown } | undefined;
+  let row:
+    | { row_count: number; latest_dt: unknown; latest_close: unknown }
+    | undefined;
   try {
-    const tbl = await stmt.query(ticker);
-    countRow = tbl.toArray().map((r) => ({ ...r.toJSON() }))[0] as
-      | { row_count: number; latest_dt: unknown }
+    const tbl = await stmt.query(ticker, ticker, ticker);
+    row = tbl.toArray().map((r) => ({ ...r.toJSON() }))[0] as
+      | { row_count: number; latest_dt: unknown; latest_close: unknown }
       | undefined;
   } finally {
     await stmt.close();
   }
 
-  const rowCount = Number(countRow?.row_count ?? 0);
+  const rowCount = Number(row?.row_count ?? 0);
   dataState.rowCount = rowCount;
 
-  if (rowCount > 0) {
-    const latestDt = formatDate(countRow!.latest_dt);
-    dataState.latestDate = latestDt;
-
-    const closeStmt = await conn.prepare(
-      `SELECT close FROM ohlcv WHERE ticker = ? AND dt = ? LIMIT 1`,
-    );
-    try {
-      const tbl = await closeStmt.query(ticker, latestDt);
-      const row = tbl.toArray().map((r) => ({ ...r.toJSON() }))[0] as
-        | { close: number }
-        | undefined;
-      dataState.latestClose = row ? Number(row.close) : null;
-    } finally {
-      await closeStmt.close();
-    }
+  if (rowCount > 0 && row) {
+    dataState.latestDate = formatDate(row.latest_dt);
+    dataState.latestClose = row.latest_close == null ? null : Number(row.latest_close);
   } else {
     dataState.latestClose = null;
     dataState.latestDate = null;
@@ -252,15 +243,30 @@ export async function clearCache(): Promise<void> {
 
 function formatDate(v: unknown): string {
   if (v == null) return '';
-  if (v instanceof Date) return v.toISOString().slice(0, 10);
-  if (typeof v === 'string') return v.slice(0, 10);
-  // DuckDB DATE may come back as a number (days since epoch) via Arrow.
-  if (typeof v === 'number') {
-    const ms = v * 86_400_000;
-    return new Date(ms).toISOString().slice(0, 10);
+  if (v instanceof Date) {
+    return Number.isFinite(v.getTime()) ? v.toISOString().slice(0, 10) : '';
   }
-  // Fallback: best-effort coerce.
-  return String(v).slice(0, 10);
+  if (typeof v === 'string') {
+    // Already-ISO date; trim time portion if present.
+    const trimmed = v.trim();
+    // Validate it parses to a real date before trusting it.
+    const parsed = new Date(trimmed);
+    if (!Number.isNaN(parsed.getTime())) return trimmed.slice(0, 10);
+    return '';
+  }
+  // DuckDB DATE via Arrow comes back as either:
+  //   - number = days since 1970-01-01
+  //   - bigint = same, or sometimes ms-since-epoch in some Arrow versions
+  // Heuristic: any value > ~1e6 is too large to be days (would be year ~4700+),
+  // so treat it as ms. Anything smaller is days.
+  if (typeof v === 'number' || typeof v === 'bigint') {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return '';
+    const ms = Math.abs(n) > 1_000_000 ? n : n * 86_400_000;
+    const d = new Date(ms);
+    return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
+  }
+  return '';
 }
 
 function toDate(v: unknown): Date | null {
