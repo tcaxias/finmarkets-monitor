@@ -1,12 +1,26 @@
-// DuckDB-WASM initialization with Vite asset URLs.
+// DuckDB-WASM initialization.
 // Reference: https://duckdb.org/docs/api/wasm/instantiation
 // OPFS persistence: https://duckdb.org/docs/api/wasm/persistence
+//
+// DuckDB-WASM binary loading strategy:
+// - Workers (~800 KB each) are bundled via Vite ?url imports — small enough for
+//   Cloudflare Pages' 25 MiB per-file upload limit and required to be same-origin
+//   in some browsers.
+// - WASM blobs (35-41 MB each) exceed the 25 MiB Pages limit. We load them from
+//   jsDelivr's npm mirror, which serves the same files DuckDB-WASM ships in its
+//   npm package. The version is pinned to match our installed npm dependency to
+//   avoid silent ABI drift.
 import * as duckdb from '@duckdb/duckdb-wasm';
 
-import duckdb_wasm from '@duckdb/duckdb-wasm/dist/duckdb-mvp.wasm?url';
 import mvp_worker from '@duckdb/duckdb-wasm/dist/duckdb-browser-mvp.worker.js?url';
-import duckdb_wasm_eh from '@duckdb/duckdb-wasm/dist/duckdb-eh.wasm?url';
 import eh_worker from '@duckdb/duckdb-wasm/dist/duckdb-browser-eh.worker.js?url';
+
+// Keep this version in sync with the installed @duckdb/duckdb-wasm in package.json.
+// If you bump the npm dependency, also bump this constant. Mismatch = subtle ABI bugs.
+const DUCKDB_WASM_VERSION = '1.33.1-dev45.0';
+const DUCKDB_CDN_BASE = `https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@${DUCKDB_WASM_VERSION}/dist`;
+const duckdb_wasm = `${DUCKDB_CDN_BASE}/duckdb-mvp.wasm`;
+const duckdb_wasm_eh = `${DUCKDB_CDN_BASE}/duckdb-eh.wasm`;
 
 const MANUAL_BUNDLES: duckdb.DuckDBBundles = {
   mvp: {
@@ -43,6 +57,7 @@ function opfsAvailable(): boolean {
 export async function getDb(): Promise<duckdb.AsyncDuckDB> {
   if (dbPromise) return dbPromise;
   dbPromise = (async () => {
+    console.info(`DuckDB-WASM loading from CDN: ${DUCKDB_CDN_BASE}`);
     const bundle = await duckdb.selectBundle(MANUAL_BUNDLES);
     const worker = new Worker(bundle.mainWorker!);
     const logger = new duckdb.ConsoleLogger();

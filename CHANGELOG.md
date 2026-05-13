@@ -24,6 +24,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **DuckDB-WASM binaries load from jsDelivr CDN instead of being bundled.**
+  Cloudflare Pages caps individual file uploads at 25 MiB; the MVP (~39 MB)
+  and EH (~34 MB) WASM blobs exceeded that limit, blocking deploys. The
+  WASM URLs in `src/lib/duckdb.ts` now point at
+  `https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@<pinned-version>/dist/`.
+  Worker files (~800 KB each) remain bundled via Vite `?url` imports.
+  `DUCKDB_WASM_VERSION` constant pins the CDN version and must stay in sync
+  with the installed npm dependency. `dist/` drops from ~75 MB to under 3 MB.
 - **Settings panel no longer auto-collapses mid-edit.** Snapshot the
   "configured" state once at mount and bind `<details open>` to a local
   toggle. Previously the panel could collapse while the user was editing

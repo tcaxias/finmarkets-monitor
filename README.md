@@ -44,6 +44,17 @@ npm run deploy:preview   # preview deploy (--branch=preview)
 
 The deploy command runs `npm run build` first, then uploads `dist/` to Cloudflare Pages.
 
+### DuckDB WASM hosting
+
+The DuckDB-WASM binaries (~40 MB each) are loaded at runtime from jsDelivr's
+npm mirror (https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm/) rather than
+bundled into the deployed assets. Cloudflare Pages caps individual file uploads
+at 25 MiB, and the WASM files exceed that.
+
+The version is pinned in `src/lib/duckdb.ts` (`DUCKDB_WASM_VERSION` constant)
+and must be kept in sync with the installed npm package. If you bump
+`@duckdb/duckdb-wasm`, also update the constant in `duckdb.ts`.
+
 ### Notes
 
 - The Twelve Data API key is stored in browser `localStorage`, not in the deployed bundle.
