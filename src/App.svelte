@@ -5,6 +5,7 @@
   import ChartPanel from './components/ChartPanel.svelte';
   import RsiPanel from './components/RsiPanel.svelte';
   import MacdPanel from './components/MacdPanel.svelte';
+  import ReviewExport from './components/ReviewExport.svelte';
   import StatusBanner from './components/StatusBanner.svelte';
   import { getDb, getVersion } from './lib/duckdb';
   import { refreshState } from './lib/data.svelte';
@@ -58,6 +59,8 @@
   <RsiPanel />
 
   <MacdPanel />
+
+  <ReviewExport />
 
   {#if settings.apiKey.trim() === ''}
     <StatusBanner
