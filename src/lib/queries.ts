@@ -53,18 +53,33 @@ function toNullableNum(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-export async function getCandles(ticker: string): Promise<Candle[]> {
+export async function getCandles(
+  ticker: string,
+  asOf?: string | null,
+): Promise<Candle[]> {
   const conn = await getConn();
-  const stmt = await conn.prepare(
-    `SELECT
-       epoch(dt)::BIGINT AS time,
-       open, high, low, close
-     FROM ohlcv
-     WHERE ticker = ?
-     ORDER BY dt`,
-  );
+  // Phase B: when `asOf` is set, filter to bars dated on or before that
+  // calendar day. We CAST(? AS DATE) explicitly because the DuckDB-WASM
+  // bind layer infers `?` parameter types from the value's JS type, and
+  // strings would otherwise bind as VARCHAR — comparing VARCHAR to a
+  // DATE column triggers the "invalid date" parameter error we hit in
+  // af22d1f. The cast forces the comparison into DATE space.
+  const sql = asOf
+    ? `SELECT
+         epoch(dt)::BIGINT AS time,
+         open, high, low, close
+       FROM ohlcv
+       WHERE ticker = ? AND dt <= CAST(? AS DATE)
+       ORDER BY dt`
+    : `SELECT
+         epoch(dt)::BIGINT AS time,
+         open, high, low, close
+       FROM ohlcv
+       WHERE ticker = ?
+       ORDER BY dt`;
+  const stmt = await conn.prepare(sql);
   try {
-    const tbl = await stmt.query(ticker);
+    const tbl = asOf ? await stmt.query(ticker, asOf) : await stmt.query(ticker);
     return tbl.toArray().map((row) => {
       const r = row.toJSON() as Record<string, unknown>;
       return {
@@ -80,7 +95,11 @@ export async function getCandles(ticker: string): Promise<Candle[]> {
   }
 }
 
-export async function getSma(ticker: string, period: number): Promise<MaPoint[]> {
+export async function getSma(
+  ticker: string,
+  period: number,
+  asOf?: string | null,
+): Promise<MaPoint[]> {
   if (!Number.isInteger(period) || period < 1) {
     throw new Error(`getSma: period must be a positive integer (got ${period})`);
   }
@@ -88,6 +107,14 @@ export async function getSma(ticker: string, period: number): Promise<MaPoint[]>
   // `period` is inlined: it's a fixed constant (20 or 200), never user input.
   // Inlining keeps the window-frame syntactically valid (DuckDB rejects bind
   // parameters inside ROWS BETWEEN ... PRECEDING).
+  //
+  // Phase B: the `asOf` filter goes inside the SELECT subquery so the
+  // SMA window is computed only over bars that existed on that date —
+  // otherwise the trailing N rows of the as-of slice would borrow
+  // values from the future.
+  const whereClause = asOf
+    ? `WHERE ticker = ? AND dt <= CAST(? AS DATE)`
+    : `WHERE ticker = ?`;
   const sql = `
     SELECT
       epoch(dt)::BIGINT AS time,
@@ -96,7 +123,7 @@ export async function getSma(ticker: string, period: number): Promise<MaPoint[]>
         ROWS BETWEEN ${period - 1} PRECEDING AND CURRENT ROW
       ) AS value
     FROM ohlcv
-    WHERE ticker = ?
+    ${whereClause}
     QUALIFY COUNT(*) OVER (
       ORDER BY dt
       ROWS BETWEEN ${period - 1} PRECEDING AND CURRENT ROW
@@ -105,7 +132,7 @@ export async function getSma(ticker: string, period: number): Promise<MaPoint[]>
   `;
   const stmt = await conn.prepare(sql);
   try {
-    const tbl = await stmt.query(ticker);
+    const tbl = asOf ? await stmt.query(ticker, asOf) : await stmt.query(ticker);
     return tbl.toArray().map((row) => {
       const r = row.toJSON() as Record<string, unknown>;
       return { time: toNum(r.time), value: toNum(r.value) };
@@ -115,19 +142,29 @@ export async function getSma(ticker: string, period: number): Promise<MaPoint[]>
   }
 }
 
-export async function getVolumeBars(ticker: string): Promise<VolumeBar[]> {
+export async function getVolumeBars(
+  ticker: string,
+  asOf?: string | null,
+): Promise<VolumeBar[]> {
   const conn = await getConn();
-  const stmt = await conn.prepare(
-    `SELECT
-       epoch(dt)::BIGINT AS time,
-       volume,
-       close >= open AS up
-     FROM ohlcv
-     WHERE ticker = ?
-     ORDER BY dt`,
-  );
+  const sql = asOf
+    ? `SELECT
+         epoch(dt)::BIGINT AS time,
+         volume,
+         close >= open AS up
+       FROM ohlcv
+       WHERE ticker = ? AND dt <= CAST(? AS DATE)
+       ORDER BY dt`
+    : `SELECT
+         epoch(dt)::BIGINT AS time,
+         volume,
+         close >= open AS up
+       FROM ohlcv
+       WHERE ticker = ?
+       ORDER BY dt`;
+  const stmt = await conn.prepare(sql);
   try {
-    const tbl = await stmt.query(ticker);
+    const tbl = asOf ? await stmt.query(ticker, asOf) : await stmt.query(ticker);
     return tbl.toArray().map((row) => {
       const r = row.toJSON() as Record<string, unknown>;
       return {

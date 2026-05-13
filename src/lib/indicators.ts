@@ -44,16 +44,25 @@ function toNum(v: unknown): number {
  * Pull (time, close) pairs for `ticker` ordered by date. Shared input for
  * both RSI and MACD so we don't double-query.
  */
-export async function getCloses(ticker: string): Promise<ClosePoint[]> {
+export async function getCloses(
+  ticker: string,
+  asOf?: string | null,
+): Promise<ClosePoint[]> {
   const conn = await getConn();
-  const stmt = await conn.prepare(
-    `SELECT epoch(dt)::BIGINT AS time, close
-     FROM ohlcv
-     WHERE ticker = ?
-     ORDER BY dt`,
-  );
+  // See queries.ts for the rationale on CAST(? AS DATE) — same DuckDB
+  // bind-type quirk applies here.
+  const sql = asOf
+    ? `SELECT epoch(dt)::BIGINT AS time, close
+       FROM ohlcv
+       WHERE ticker = ? AND dt <= CAST(? AS DATE)
+       ORDER BY dt`
+    : `SELECT epoch(dt)::BIGINT AS time, close
+       FROM ohlcv
+       WHERE ticker = ?
+       ORDER BY dt`;
+  const stmt = await conn.prepare(sql);
   try {
-    const tbl = await stmt.query(ticker);
+    const tbl = asOf ? await stmt.query(ticker, asOf) : await stmt.query(ticker);
     return tbl.toArray().map((row) => {
       const r = row.toJSON() as Record<string, unknown>;
       return { time: toNum(r.time), close: toNum(r.close) };
@@ -84,8 +93,12 @@ export function computeRsi(closes: ClosePoint[], period = 14): RsiPoint[] {
   return out;
 }
 
-export async function getRsi(ticker: string, period = 14): Promise<RsiPoint[]> {
-  const closes = await getCloses(ticker);
+export async function getRsi(
+  ticker: string,
+  period = 14,
+  asOf?: string | null,
+): Promise<RsiPoint[]> {
+  const closes = await getCloses(ticker, asOf);
   return computeRsi(closes, period);
 }
 
@@ -137,8 +150,9 @@ export async function getMacd(
   fast = 12,
   slow = 26,
   signal = 9,
+  asOf?: string | null,
 ): Promise<MacdPoint[]> {
-  const closes = await getCloses(ticker);
+  const closes = await getCloses(ticker, asOf);
   return computeMacd(closes, fast, slow, signal);
 }
 

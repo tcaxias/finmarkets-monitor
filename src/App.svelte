@@ -15,6 +15,7 @@
   // ticker view).
 
   import StatusBanner from './components/StatusBanner.svelte';
+  import HistoricalControls from './components/HistoricalControls.svelte';
   import PositionTabs from './components/PositionTabs.svelte';
   import PortfolioOverview from './components/PortfolioOverview.svelte';
   import PositionsPanel from './components/PositionsPanel.svelte';
@@ -28,6 +29,7 @@
   import { refreshState, dataState } from './lib/data.svelte';
   import { settings, getActivePosition } from './lib/settings.svelte';
   import { evalState, getEval, recomputeAll, recomputeOne } from './lib/evaluation.svelte';
+  import { viewState, setAsOfDate, daysAgo } from './lib/viewState.svelte';
 
   let dbStatus = $state<'loading' | 'ready' | 'error'>('loading');
   let dbVersion = $state<string>('');
@@ -84,6 +86,24 @@
     }
   });
 
+  // Phase B: when the historical-view as-of date changes, every ticker's
+  // cached slice is now stale (its truncation point moved). Re-run all
+  // slices so the overview AND any per-ticker view reflect the new
+  // viewpoint without a manual refresh.
+  $effect(() => {
+    const _asOf = viewState.asOfDate;
+    void _asOf;
+    if (dbStatus === 'ready') {
+      void recomputeAll();
+    }
+  });
+
+  function onReturnToLive(): void {
+    setAsOfDate(null);
+  }
+
+  const ago = $derived(daysAgo());
+
   // Dynamic document title: "<TICKER> $20.97 — Monitor" for the active
   // position; falls back to "Portfolio — Monitor" in overview mode.
   $effect(() => {
@@ -138,7 +158,27 @@
     </div>
   </nav>
 
+  <HistoricalControls />
+
   <main>
+    {#if viewState.asOfDate !== null}
+      <section class="historical-banner-wrap" aria-live="polite">
+        <div class="container narrow historical-banner">
+          <span class="historical-banner-arrow" aria-hidden="true">«</span>
+          <span class="historical-banner-text">
+            <strong>Historical view: {viewState.asOfDate}</strong>
+            {#if ago > 0}
+              <span class="historical-banner-ago">({ago} day{ago === 1 ? '' : 's'} ago)</span>
+            {/if}
+            — analysis reflects data as-of that date.
+          </span>
+          <button type="button" class="historical-banner-button" onclick={onReturnToLive}>
+            Return to Live
+          </button>
+        </div>
+      </section>
+    {/if}
+
     <section class="container narrow stack" id="status">
       <StatusBanner />
     </section>
@@ -326,6 +366,62 @@
   main {
     flex: 1;
     padding-bottom: var(--gap-xl);
+  }
+
+  /* Historical-view banner: amber/warn tone so the user can't miss that
+     the dashboard is in backtest mode. Sits above StatusBanner; uses the
+     wide row so it never wraps awkwardly under the prominent text. */
+  .historical-banner-wrap {
+    background: var(--warn-soft);
+    border-bottom: 1px solid rgba(245, 158, 11, 0.4);
+    margin-bottom: var(--gap-lg);
+  }
+
+  .historical-banner {
+    display: flex;
+    align-items: center;
+    gap: var(--gap);
+    padding: 10px var(--gap-lg);
+    color: #fde68a;
+    font-size: 14px;
+    flex-wrap: wrap;
+  }
+
+  .historical-banner-arrow {
+    font-size: 18px;
+    line-height: 1;
+    color: #fcd34d;
+  }
+
+  .historical-banner-text {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .historical-banner-text strong {
+    color: #fef3c7;
+    font-family: var(--mono);
+  }
+
+  .historical-banner-ago {
+    color: #fcd34d;
+    margin-left: 4px;
+  }
+
+  .historical-banner-button {
+    background: rgba(245, 158, 11, 0.2);
+    color: #fef3c7;
+    border: 1px solid rgba(245, 158, 11, 0.5);
+    border-radius: var(--radius-sm);
+    padding: 5px 12px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    transition: background 0.12s ease;
+  }
+
+  .historical-banner-button:hover {
+    background: rgba(245, 158, 11, 0.35);
   }
 
   .about-block {

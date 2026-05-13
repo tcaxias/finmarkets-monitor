@@ -7,6 +7,7 @@
   import { settings, getActivePosition } from '../lib/settings.svelte';
   import { dataState } from '../lib/data.svelte';
   import { evalState, getEval } from '../lib/evaluation.svelte';
+  import { viewState } from '../lib/viewState.svelte';
   import { computeThresholds } from '../lib/math';
   import { generateSundayReview } from '../lib/sundayReview';
 
@@ -73,9 +74,19 @@
         activePosition.taxRate,
       );
 
+      // Phase B: in historical view, anchor `reviewDate` to the as-of
+      // date so §2 (days-until-tax-due) and §3 ("Friday close") are
+      // internally consistent with what the dashboard is showing. The
+      // wall-clock generation time is passed separately as `generatedAt`
+      // so the auto-fill footer's "Generated at" line still reflects the
+      // moment the document was actually produced.
+      const asOf = viewState.asOfDate;
+      const now = new Date();
+      const reviewDate = asOf ? new Date(`${asOf}T12:00:00Z`) : now;
+
       markdown = generateSundayReview({
         ticker,
-        reviewDate: new Date(),
+        reviewDate,
         thresholds,
         taxDueDate: activePosition.taxDueDate || null,
         candles: slice.candles,
@@ -85,6 +96,8 @@
         rsi: slice.rsi,
         macd: slice.macd,
         witnesses: slice.summary,
+        asOfDate: asOf,
+        generatedAt: now,
       });
 
       generatedAtFetch = tickerLastFetched;

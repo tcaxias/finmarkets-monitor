@@ -5,6 +5,55 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added (Phase B — historical backtest mode)
+
+- **`viewState.svelte.ts`** — reactive `asOfDate` Svelte rune state with
+  `setAsOfDate`, `isHistorical`, and `daysAgo` helpers. Persisted to
+  `localStorage` under `finmarkets-monitor:viewState` so a backtest
+  survives reloads. Validation rejects malformed ISO strings, impossible
+  calendar days (e.g. Feb 30), and future dates.
+- **`HistoricalControls` component** — thin horizontal strip below the
+  page nav with a `<input type="date">` (max=today), Apply, and Live
+  buttons. Defaults the picker to today (live) or the current as-of
+  date (historical).
+- **Prominent amber banner** rendered immediately above `StatusBanner`
+  whenever `viewState.asOfDate !== null`. Shows the as-of date,
+  "(N days ago)", and a "Return to Live" button that clears the state.
+- **Optional `asOf` parameter on every query and indicator fetcher**
+  (`getCandles`, `getSma`, `getVolumeBars`, `getCloses`, `getRsi`,
+  `getMacd`). When provided, SQL appends `AND dt <= CAST(? AS DATE)` —
+  the explicit cast avoids the DuckDB-WASM bind-type quirk that surfaced
+  in af22d1f.
+- **`PerTickerEval.asOfDate` field** records the as-of date the slice
+  was computed against, so consumers can detect a stale slice without
+  reading viewState directly.
+- **App-level `$effect`** watches `viewState.asOfDate` and triggers
+  `recomputeAll()` so every ticker's slice rebuilds when the historical
+  view changes.
+- **Sunday review export uses `asOfDate` as `reviewDate`**. Adds
+  `inputs.asOfDate` and `inputs.generatedAt` to `ReviewInputs`. The
+  banner and auto-fill footer surface a separate "As of:" line when
+  historical, while "Generated at:" continues to reflect wall-clock
+  generation time.
+- **`PortfolioOverview` "As of {date}" tag** in the panel header when
+  in historical mode — consistent with the amber banner styling.
+- **20 new tests** covering `setAsOfDate` validation (null, valid past,
+  today, future, malformed, Feb 30), `isHistorical`, `daysAgo`,
+  persistence, and historical Sunday-review banner/footer behavior.
+  Total tests: 113 (up from 93).
+
+### Notes (Phase B)
+
+- **Chart vertical-line marker skipped.** The chart already truncates
+  visually because the slice's candles are `<= asOfDate`, which makes
+  the as-of point obvious. Adding a custom vertical marker via
+  Lightweight Charts would have required a hidden series or marker
+  hack — disproportionate complexity for a small visual cue.
+- **Refresh-while-historical** still fetches latest data into DuckDB
+  (the Twelve Data API call doesn't know about asOfDate). The next
+  recompute then truncates against the active as-of date. This is
+  intentional and acceptable for v1.
+
 ### Added (Phase A — multi-ticker portfolio support)
 
 - **Multi-position portfolio model.** Settings now hold a list of

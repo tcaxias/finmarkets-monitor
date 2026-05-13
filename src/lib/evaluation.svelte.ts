@@ -20,6 +20,7 @@
 
 import { dataState } from './data.svelte';
 import { settings } from './settings.svelte';
+import { viewState } from './viewState.svelte';
 import {
   getCandles,
   getSma,
@@ -61,6 +62,14 @@ export interface PerTickerEval {
   summary: WitnessSummary | null;
   latestClose: number | null;
   prevClose: number | null;
+  /**
+   * The asOfDate this slice was computed against (`null` = live mode).
+   * Phase B: lets consumers detect a stale slice when `viewState.asOfDate`
+   * has changed but a recompute hasn't landed yet — the App-level effect
+   * handles invalidation, but components can still render an "as-of"
+   * indicator without re-reading viewState directly.
+   */
+  asOfDate: string | null;
 }
 
 export interface EvalState {
@@ -87,6 +96,7 @@ function emptySlice(): PerTickerEval {
     summary: null,
     latestClose: null,
     prevClose: null,
+    asOfDate: null,
   };
 }
 
@@ -122,16 +132,20 @@ export async function recomputeOne(ticker: string): Promise<void> {
   if (existing) return existing;
 
   const slice = getEval(t);
+  // Snapshot the asOfDate at the start of recompute so the same value is
+  // used for every parallel query AND stamped on the slice. Reading
+  // viewState mid-flight could race against a user's "Apply" click.
+  const asOf = viewState.asOfDate;
   const work = (async () => {
     slice.loading = true;
     slice.error = null;
     try {
       const [candles, sma20, sma200, volume, closes] = await Promise.all([
-        getCandles(t),
-        getSma(t, 20),
-        getSma(t, 200),
-        getVolumeBars(t),
-        getCloses(t),
+        getCandles(t, asOf),
+        getSma(t, 20, asOf),
+        getSma(t, 200, asOf),
+        getVolumeBars(t, asOf),
+        getCloses(t, asOf),
       ]);
 
       if (candles.length === 0) {
@@ -147,6 +161,7 @@ export async function recomputeOne(ticker: string): Promise<void> {
         slice.divergence = null;
         slice.latestClose = null;
         slice.prevClose = null;
+        slice.asOfDate = asOf;
         slice.generation += 1;
         return;
       }
@@ -171,6 +186,7 @@ export async function recomputeOne(ticker: string): Promise<void> {
       slice.latestClose = candles[candles.length - 1].close;
       slice.prevClose =
         candles.length >= 2 ? candles[candles.length - 2].close : null;
+      slice.asOfDate = asOf;
       slice.generation += 1;
     } catch (err) {
       slice.error = err instanceof Error ? err.message : String(err);

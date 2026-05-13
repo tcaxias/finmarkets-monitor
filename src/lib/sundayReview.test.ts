@@ -302,6 +302,64 @@ describe('generateSundayReview — red-flag triggers', () => {
   });
 });
 
+// ---------- historical (asOfDate) mode ----------
+
+describe('generateSundayReview — historical (asOfDate)', () => {
+  it('includes an "As of" line in the banner when asOfDate is set', () => {
+    const out = generateSundayReview(makeInputs({ asOfDate: '2026-04-15' }));
+    expect(out).toContain('As of: 2026-04-15');
+    expect(out).toMatch(/As of: 2026-04-15 \(historical view/);
+  });
+
+  it('omits the "As of" banner line in live mode (no asOfDate)', () => {
+    const out = generateSundayReview(makeInputs());
+    // No leading "As of: " — only the banner line should be checked, not
+    // the unrelated "as-of-that-date" copy from elsewhere.
+    expect(out).not.toMatch(/^As of: \d{4}-\d{2}-\d{2}/m);
+  });
+
+  it('includes an "As of" line in the auto-fill summary when historical', () => {
+    const out = generateSundayReview(makeInputs({ asOfDate: '2026-04-15' }));
+    const footer = out.slice(out.indexOf('## Auto-fill summary'));
+    expect(footer).toContain('As of: 2026-04-15 (historical view)');
+  });
+
+  it('keeps "Generated at" anchored to wall-clock generatedAt, not asOfDate', () => {
+    // generatedAt is now (wall-clock); reviewDate is the as-of date. The
+    // footer's "Generated at:" line must reflect generatedAt so a
+    // reviewer can tell when the document was actually produced.
+    const generatedAt = new Date('2026-05-13T15:30:00Z');
+    const reviewDate = new Date('2026-04-15T12:00:00Z');
+    const out = generateSundayReview(
+      makeInputs({ asOfDate: '2026-04-15', reviewDate, generatedAt }),
+    );
+    expect(out).toContain('Generated at: 2026-05-13T15:30:00Z');
+    // Section header still uses reviewDate's iso date.
+    expect(out).toContain('# AAPL Weekly Review — Auto-Generated 2026-04-15');
+  });
+
+  it('produces coherent sections when reviewDate and asOfDate match (anchored backtest)', () => {
+    // Common case from ReviewExport: asOfDate is set, reviewDate is
+    // derived from it, generatedAt is now. Verify the document is
+    // internally consistent — e.g. §2 days-until-tax-due is computed
+    // from reviewDate (= asOfDate), so the bucket should match what a
+    // user reading the dashboard on that as-of day would expect.
+    const out = generateSundayReview(
+      makeInputs({
+        asOfDate: '2026-04-15',
+        reviewDate: new Date('2026-04-15T12:00:00Z'),
+        taxDueDate: '2026-10-10', // ~178 days out from 2026-04-15
+        generatedAt: new Date('2026-05-13T10:00:00Z'),
+      }),
+    );
+    // 178 days ≈ "90–180 days" bucket (upper-bound inclusive).
+    expect(out).toMatch(/\[x\] 90–180 days/);
+    // Banner ISO matches reviewDate.
+    expect(out).toContain('# AAPL Weekly Review — Auto-Generated 2026-04-15');
+    expect(out).toContain('As of: 2026-04-15');
+  });
+});
+
 // ---------- helpers ----------
 
 /**

@@ -30,7 +30,12 @@ import { detectRsiDivergence, type ClosePoint } from './indicators';
 
 export interface ReviewInputs {
   ticker: string;
-  reviewDate: Date; // when the review is being generated
+  /**
+   * The date the review pertains to. In live mode this is "now". In
+   * historical (as-of) mode it's the as-of date. Used to drive the
+   * banner date, §2 days-until-tax-due math, and the section header.
+   */
+  reviewDate: Date;
   thresholds: Thresholds;
   taxDueDate: string | null; // ISO date or null
   candles: Candle[];
@@ -42,6 +47,21 @@ export interface ReviewInputs {
   rsi: RsiPoint[];
   macd: MacdPoint[];
   witnesses: WitnessSummary;
+  /**
+   * Phase B: when set, the document was generated for a historical view.
+   * Surfaces in the banner ("As of: …") and the auto-fill summary so a
+   * reviewer reading a printed/exported file can tell at a glance that
+   * the analysis isn't current. `null` (or omitted) = live-mode review.
+   */
+  asOfDate?: string | null;
+  /**
+   * Wall-clock generation time. Defaults to `reviewDate` when omitted —
+   * i.e. live-mode reviews don't need to pass it. In historical mode the
+   * caller passes `new Date()` so the auto-fill footer's "Generated at"
+   * line reflects the actual point in time the document was produced,
+   * separate from the as-of date the analysis is anchored to.
+   */
+  generatedAt?: Date;
 }
 
 // How many bars back to compare against for "this week" change. 6 because
@@ -112,14 +132,23 @@ export function generateSundayReview(inputs: ReviewInputs): string {
 
 function banner(inputs: ReviewInputs): string {
   const iso = isoDate(inputs.reviewDate);
-  const ts = isoTimestamp(inputs.reviewDate);
-  return [
+  const generatedAt = inputs.generatedAt ?? inputs.reviewDate;
+  const ts = isoTimestamp(generatedAt);
+  const lines = [
     `# ${inputs.ticker} Weekly Review — Auto-Generated ${iso}`,
     ``,
     `This document was auto-generated from market data fetched on ${ts}.`,
+  ];
+  // Phase B: surface the as-of date prominently when historical so the
+  // reviewer doesn't mistake a backtest for a live read.
+  if (inputs.asOfDate) {
+    lines.push(`As of: ${inputs.asOfDate} (historical view — analysis reflects data through that date).`);
+  }
+  lines.push(
     `Computed fields are pre-filled. Judgment fields (in \`______\` form) are for you to complete.`,
     `This is NOT a substitute for personal judgment. Read every section.`,
-  ].join('\n');
+  );
+  return lines.join('\n');
 }
 
 /**
@@ -666,16 +695,25 @@ function redFlagTriggers(inputs: ReviewInputs): string {
 // ---------- auto-fill summary footer ----------
 
 function autoFillSummary(inputs: ReviewInputs): string {
-  const ts = isoTimestamp(inputs.reviewDate);
+  // Phase B: `Generated at` is wall-clock now; `As of` is the historical
+  // anchor. When `generatedAt` is omitted (live mode), the two collapse
+  // to a single timestamp — see the field doc on ReviewInputs.
+  const generatedAt = inputs.generatedAt ?? inputs.reviewDate;
+  const ts = isoTimestamp(generatedAt);
   const latest = lastOrNull(inputs.candles);
   const latestDate = latest ? isoDate(new Date(latest.time * 1000)) : '—';
 
-  return [
+  const lines = [
     `---`,
     ``,
     `## Auto-fill summary`,
     ``,
     `Generated at: ${ts}`,
+  ];
+  if (inputs.asOfDate) {
+    lines.push(`As of: ${inputs.asOfDate} (historical view)`);
+  }
+  lines.push(
     `Data freshness: latest bar dated ${latestDate}, fetched ${ts}`,
     `Witnesses: ${inputs.witnesses.convictionLabel}`,
     `Recommendation: ${inputs.witnesses.recommendation}`,
@@ -684,7 +722,8 @@ function autoFillSummary(inputs: ReviewInputs): string {
     `Sections requiring judgment: 1, 5 (S/R levels), 9 (decision), 10 (calendar), cognitive integrity`,
     ``,
     `Take ~15 minutes to complete the blank fields before acting on this review.`,
-  ].join('\n');
+  );
+  return lines.join('\n');
 }
 
 // ---------- helpers ----------

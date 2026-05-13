@@ -9,6 +9,7 @@
   import { settings, setActive, type Position } from '../lib/settings.svelte';
   import { evalState, getEval } from '../lib/evaluation.svelte';
   import { dataState } from '../lib/data.svelte';
+  import { viewState } from '../lib/viewState.svelte';
   import { computeThresholds } from '../lib/math';
 
   type SortKey =
@@ -222,9 +223,16 @@
 <section class="portfolio-overview">
   <header class="panel-header">
     <h2>Portfolio Overview</h2>
-    <span class="count">
-      {settings.positions.length} position{settings.positions.length === 1 ? '' : 's'}
-    </span>
+    <div class="header-meta">
+      {#if viewState.asOfDate !== null}
+        <span class="as-of-tag" title="Historical view active">
+          As of {viewState.asOfDate}
+        </span>
+      {/if}
+      <span class="count">
+        {settings.positions.length} position{settings.positions.length === 1 ? '' : 's'}
+      </span>
+    </div>
   </header>
 
   {#if settings.positions.length === 0}
@@ -321,6 +329,24 @@
     font-size: 12px;
     text-transform: uppercase;
     letter-spacing: 0.05em;
+  }
+
+  .header-meta {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .as-of-tag {
+    font-size: 11px;
+    font-family: var(--mono);
+    color: #fde68a;
+    background: var(--warn-soft);
+    border: 1px solid rgba(245, 158, 11, 0.4);
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    text-transform: none;
+    letter-spacing: 0;
   }
 
   .placeholder {
