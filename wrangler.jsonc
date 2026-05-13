@@ -1,0 +1,8 @@
+// Cloudflare Pages configuration for finmarkets-monitor
+// Docs: https://developers.cloudflare.com/pages/functions/wrangler-configuration/
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "finmarkets-monitor",
+  "compatibility_date": "2026-05-13",
+  "pages_build_output_dir": "./dist"
+}

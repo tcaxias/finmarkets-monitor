@@ -22,6 +22,36 @@ equity.
 6. Click "Refresh data" to pull historical OHLCV
 7. Review the Witness Panel and Chart for the current state
 
+## Deployment
+
+Deployed to Cloudflare Pages at https://finmarkets-monitor.pages.dev (after first deploy).
+
+### One-time setup
+
+You need a Cloudflare account and a Pages project. The first deploy will create the
+project automatically; subsequent deploys update it.
+
+```bash
+npx wrangler login   # opens browser for OAuth, one-time
+```
+
+### Deploy
+
+```bash
+npm run deploy           # production deploy (--branch=main)
+npm run deploy:preview   # preview deploy (--branch=preview)
+```
+
+The deploy command runs `npm run build` first, then uploads `dist/` to Cloudflare Pages.
+
+### Notes
+
+- The Twelve Data API key is stored in browser `localStorage`, not in the deployed bundle.
+  Each user enters their own key in the Settings panel after the page loads.
+- All data lives in the user's browser (DuckDB-WASM + OPFS). No backend, no user accounts,
+  no server-side storage.
+- The site is fully static — no Cloudflare Workers Functions, no KV, no D1.
+
 ## Companion docs
 
 The methodology this app implements lives in:
