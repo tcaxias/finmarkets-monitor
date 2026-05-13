@@ -2,6 +2,8 @@
   import SettingsPanel from './components/SettingsPanel.svelte';
   import DataPanel from './components/DataPanel.svelte';
   import ChartPanel from './components/ChartPanel.svelte';
+  import RsiPanel from './components/RsiPanel.svelte';
+  import MacdPanel from './components/MacdPanel.svelte';
   import StatusBanner from './components/StatusBanner.svelte';
   import { getDb, getVersion } from './lib/duckdb';
   import { refreshState } from './lib/data.svelte';
@@ -49,6 +51,10 @@
   <DataPanel />
 
   <ChartPanel />
+
+  <RsiPanel />
+
+  <MacdPanel />
 
   {#if settings.apiKey.trim() === ''}
     <StatusBanner
