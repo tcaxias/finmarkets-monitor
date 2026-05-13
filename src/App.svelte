@@ -1,6 +1,10 @@
 <script lang="ts">
   import SettingsPanel from './components/SettingsPanel.svelte';
+  import DataPanel from './components/DataPanel.svelte';
+  import StatusBanner from './components/StatusBanner.svelte';
   import { getDb, getVersion } from './lib/duckdb';
+  import { refreshState } from './lib/data.svelte';
+  import { settings } from './lib/settings.svelte';
 
   let dbStatus = $state<'loading' | 'ready' | 'error'>('loading');
   let dbVersion = $state<string>('');
@@ -12,6 +16,9 @@
         await getDb();
         dbVersion = await getVersion();
         dbStatus = 'ready';
+        // Pull any persisted OPFS data into reactive state so the UI is accurate
+        // before the user touches anything.
+        await refreshState();
       } catch (err) {
         dbStatus = 'error';
         dbError = err instanceof Error ? err.message : String(err);
@@ -37,6 +44,15 @@
   </header>
 
   <SettingsPanel />
+
+  <DataPanel />
+
+  {#if settings.apiKey.trim() === ''}
+    <StatusBanner
+      tone="info"
+      message="Add your Twelve Data API key in Settings to fetch data."
+    />
+  {/if}
 </main>
 
 <style>

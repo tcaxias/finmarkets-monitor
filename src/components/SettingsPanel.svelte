@@ -84,6 +84,14 @@
         </button>
       </span>
     </label>
+
+    <p class="hint">
+      Get a free Twelve Data API key at
+      <a href="https://twelvedata.com/" target="_blank" rel="noopener noreferrer"
+        >twelvedata.com</a
+      >
+      (800 req/day on free tier).
+    </p>
   </fieldset>
 
   <fieldset>
@@ -214,5 +222,16 @@
     margin: 0;
     color: #f3f4f6;
     font-variant-numeric: tabular-nums;
+  }
+
+  .hint {
+    grid-column: 1 / -1;
+    margin: 4px 0 0;
+    font-size: 12px;
+    color: #9ca3af;
+  }
+
+  .hint a {
+    color: #93c5fd;
   }
 </style>
