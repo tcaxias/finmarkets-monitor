@@ -1,11 +1,53 @@
 :root {
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
+  --sans:
+    system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+  --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 
-  font: 16px/145% var(--sans);
+  /* Spacing scale — multiples of `--gap`. Use these instead of one-off pixel
+     values so vertical rhythm stays consistent across panels. */
+  --gap: 0.75rem;
+  --gap-sm: 0.5rem;
+  --gap-lg: 1.25rem;
+  --gap-xl: 2rem;
+
+  /* Color palette — dark theme. Surface tones step from page bg → panel bg →
+     panel inset bg so borders and elevation stay legible. */
+  --bg: #0b0c10;
+  --surface: #1a1b22;
+  --surface-2: #1f2128;
+  --surface-inset: #0f1015;
+  --border: #2e303a;
+  --border-strong: #3a3d4a;
+
+  --text: #f3f4f6;
+  --text-secondary: #e5e7eb;
+  --muted: #9ca3af;
+  --muted-strong: #6b7280;
+
+  --bull: #22c55e;
+  --bull-soft: rgba(34, 197, 94, 0.18);
+  --bear: #ef4444;
+  --bear-soft: rgba(239, 68, 68, 0.18);
+  --neutral: #6b7280;
+  --warn: #f59e0b;
+  --warn-soft: rgba(245, 158, 11, 0.15);
+  --info: #3b82f6;
+  --info-soft: rgba(59, 130, 246, 0.12);
+  --link: #93c5fd;
+
+  --radius: 8px;
+  --radius-sm: 4px;
+
+  /* Layout constraints. The narrow column houses controls and text-heavy
+     panels; the wide column houses charts. */
+  --col-narrow: 800px;
+  --col-wide: 1400px;
+
+  font: 16px/1.45 var(--sans);
   color-scheme: dark;
-  color: #e5e7eb;
-  background: #0b0c10;
+  color: var(--text-secondary);
+  background: var(--bg);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -23,4 +65,29 @@ body {
 
 * {
   box-sizing: border-box;
+}
+
+/* Global focus ring — visible on every focusable element using keyboard
+   navigation. We use :focus-visible (not :focus) so mouse clicks don't
+   leave a ring on buttons. */
+:focus-visible {
+  outline: 2px solid var(--info);
+  outline-offset: 2px;
+}
+
+/* Inputs get a slightly tighter ring since they already have borders. */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--info);
+  outline-offset: 1px;
+  border-color: var(--info);
+}
+
+a {
+  color: var(--link);
+}
+
+a:hover {
+  filter: brightness(1.15);
 }

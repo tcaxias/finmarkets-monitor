@@ -1,8 +1,8 @@
 <script lang="ts">
   // Sunday weekly-review export panel. Renders a "Generate" button that
-  // pulls all underlying market data (candles, MAs, volume, RSI, MACD),
-  // computes the three witnesses, and produces a pre-filled markdown
-  // document that mirrors `~/docs/finmarkets/aapl-weekly-review.md`.
+  // reads the precomputed series + witness summary from `evalState` and
+  // produces a pre-filled markdown document mirroring
+  // `~/docs/finmarkets/aapl-weekly-review.md`.
   //
   // The generated markdown is shown in a read-only textarea so the user
   // can scroll through it before copying or downloading. Two action
@@ -13,23 +13,16 @@
   // Reactivity: when `dataState.lastFetched` or `settings.ticker` changes
   // after the user has generated a review, we mark the on-screen review
   // as "Stale" so the user knows to regenerate. We don't auto-regenerate
-  // because the data fetch is heavy (six DuckDB queries) and the user
-  // should make an explicit choice.
+  // because the markdown can be long and the user should make an
+  // explicit choice (and may have copied it already).
   //
-  // Same fetch pattern as WitnessPanel — fetch the six series in parallel,
-  // then call the pure functions in `lib/witnesses.ts` and
-  // `lib/sundayReview.ts`.
+  // M7 refactor: previously this panel ran its own queries. It now reads
+  // from `evalState`, the shared cache populated by App's recompute
+  // effect — same data the WitnessPanel and StatusBanner see.
 
   import { settings } from '../lib/settings.svelte';
   import { dataState } from '../lib/data.svelte';
-  import { getCandles, getSma, getVolumeBars } from '../lib/queries';
-  import { getRsi, getMacd } from '../lib/indicators';
-  import {
-    evaluateTrend,
-    evaluateVolume,
-    evaluateIndicators,
-    summarize,
-  } from '../lib/witnesses';
+  import { evalState } from '../lib/evaluation.svelte';
   import { computeThresholds } from '../lib/math';
   import { generateSundayReview } from '../lib/sundayReview';
 
@@ -43,7 +36,10 @@
   let generatedAtTicker = $state<string>('');
 
   const canGenerate = $derived(
-    !generating && settings.ticker.trim() !== '' && dataState.rowCount > 0,
+    !generating &&
+      settings.ticker.trim() !== '' &&
+      dataState.rowCount > 0 &&
+      evalState.summary !== null,
   );
 
   // Stale when the underlying data has changed since the last generation.
@@ -55,35 +51,23 @@
         generatedAtTicker !== settings.ticker),
   );
 
-  async function onGenerate(): Promise<void> {
+  function onGenerate(): void {
     const ticker = settings.ticker.trim();
     if (!ticker) return;
+    if (!evalState.summary) {
+      loadError = 'No witness summary available — refresh data first.';
+      return;
+    }
+    if (evalState.candles.length === 0) {
+      loadError = 'No data available — fetch market data first.';
+      return;
+    }
 
     generating = true;
     loadError = null;
     copyFeedback = '';
 
     try {
-      // Same parallel fetch as WitnessPanel.
-      const [candles, sma20, sma200, volume, rsi, macd] = await Promise.all([
-        getCandles(ticker),
-        getSma(ticker, 20),
-        getSma(ticker, 200),
-        getVolumeBars(ticker),
-        getRsi(ticker, 14),
-        getMacd(ticker, 12, 26, 9),
-      ]);
-
-      if (candles.length === 0) {
-        loadError = 'No data available — fetch market data first.';
-        return;
-      }
-
-      const trend = evaluateTrend(candles, sma20, sma200);
-      const vol = evaluateVolume(candles, volume);
-      const ind = evaluateIndicators(rsi, macd);
-      const witnesses = summarize(trend, vol, ind);
-
       const thresholds = computeThresholds(
         settings.vestPrice,
         settings.shares,
@@ -95,13 +79,13 @@
         reviewDate: new Date(),
         thresholds,
         taxDueDate: settings.taxDueDate || null,
-        candles,
-        sma20,
-        sma200,
-        volume,
-        rsi,
-        macd,
-        witnesses,
+        candles: evalState.candles,
+        sma20: evalState.sma20,
+        sma200: evalState.sma200,
+        volume: evalState.volume,
+        rsi: evalState.rsi,
+        macd: evalState.macd,
+        witnesses: evalState.summary,
       });
 
       generatedAtFetch = dataState.lastFetched;
@@ -148,7 +132,7 @@
   }
 </script>
 
-<section class="review-export">
+<section class="review-export" id="review">
   <header class="panel-header">
     <h2>Sunday Weekly Review</h2>
     {#if generating}
@@ -200,12 +184,12 @@
   .review-export {
     display: flex;
     flex-direction: column;
-    gap: 14px;
-    padding: 20px;
-    background: #1a1b22;
-    border: 1px solid #2e303a;
-    border-radius: 8px;
-    color: #e5e7eb;
+    gap: var(--gap);
+    padding: var(--gap-lg);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-secondary);
     font-size: 14px;
     text-align: left;
   }
@@ -220,12 +204,12 @@
   h2 {
     margin: 0;
     font-size: 18px;
-    color: #f3f4f6;
+    color: var(--text);
   }
 
   .status {
     font-size: 12px;
-    color: #9ca3af;
+    color: var(--muted);
   }
 
   .badge {
@@ -237,14 +221,14 @@
   }
 
   .badge.stale {
-    background: rgba(253, 230, 138, 0.15);
+    background: var(--warn-soft);
     color: #fde68a;
     border: 1px solid rgba(253, 230, 138, 0.4);
   }
 
   .hint {
     margin: 0;
-    color: #9ca3af;
+    color: var(--muted);
     font-size: 13px;
     line-height: 1.5;
   }
@@ -258,13 +242,14 @@
 
   button {
     background: #2563eb;
-    color: #f3f4f6;
+    color: var(--text);
     border: 1px solid #1d4ed8;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     padding: 8px 14px;
     cursor: pointer;
     font-size: 13px;
     font-weight: 500;
+    transition: background 0.12s ease;
   }
 
   button:hover:not(:disabled) {
@@ -277,13 +262,13 @@
   }
 
   button.ghost {
-    background: #2e303a;
-    border-color: #3a3d4a;
+    background: var(--border);
+    border-color: var(--border-strong);
     font-weight: 400;
   }
 
   button.ghost:hover:not(:disabled) {
-    background: #3a3d4a;
+    background: var(--border-strong);
   }
 
   .copy-feedback {
@@ -300,7 +285,7 @@
   }
 
   .banner.error {
-    background: rgba(239, 68, 68, 0.12);
+    background: var(--bear-soft);
     border-color: rgba(239, 68, 68, 0.4);
     color: #fca5a5;
   }
@@ -308,9 +293,9 @@
   .placeholder {
     padding: 16px;
     background: rgba(15, 20, 25, 0.6);
-    border: 1px dashed #3a3d4a;
+    border: 1px dashed var(--border-strong);
     border-radius: 6px;
-    color: #9ca3af;
+    color: var(--muted);
     text-align: center;
     font-size: 13px;
   }
@@ -319,21 +304,16 @@
     width: 100%;
     height: 400px;
     padding: 12px;
-    background: #0f1419;
+    background: var(--surface-inset);
     color: #d1d5db;
-    border: 1px solid #2e303a;
+    border: 1px solid var(--border);
     border-radius: 6px;
-    font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    font-family: var(--mono);
     font-size: 12px;
     line-height: 1.5;
     resize: vertical;
     box-sizing: border-box;
     /* Tabular numbers keep auto-filled values aligned in monospace. */
     font-variant-numeric: tabular-nums;
-  }
-
-  textarea:focus {
-    outline: none;
-    border-color: #3b82f6;
   }
 </style>

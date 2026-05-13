@@ -2,79 +2,15 @@
   // Three-witness conviction widget — the most important "at a glance"
   // output for a daily 60-second check. All the heavy lifting (verdict
   // logic, conviction tally) lives in the pure functions in
-  // `src/lib/witnesses.ts`; this component is just glue: pull the four
-  // underlying series, call the four pure functions, render the result.
+  // `src/lib/witnesses.ts`; the actual fetch + compute is centralized in
+  // `src/lib/evaluation.svelte.ts`. This component is pure presentation.
   //
-  // Reactivity: re-evaluates whenever `dataState.lastFetched` or the
-  // selected ticker changes. We read both inside the effect so Svelte 5
-  // wires the dependencies correctly even though the work happens inside
-  // an async closure (same pattern as RsiPanel/MacdPanel).
+  // M7 refactor: previously this panel ran its own DuckDB queries. It now
+  // reads from `evalState`, the shared cache populated by the App's
+  // recompute effect. That eliminates duplicated query work between this
+  // panel, ReviewExport, and StatusBanner.
 
-  import { settings } from '../lib/settings.svelte';
-  import { dataState } from '../lib/data.svelte';
-  import { getCandles, getSma, getVolumeBars } from '../lib/queries';
-  import { getRsi, getMacd } from '../lib/indicators';
-  import {
-    evaluateTrend,
-    evaluateVolume,
-    evaluateIndicators,
-    summarize,
-    type WitnessSummary,
-  } from '../lib/witnesses';
-
-  let summary = $state<WitnessSummary | null>(null);
-  let loading = $state(false);
-  let loadError = $state<string | null>(null);
-
-  async function recompute(): Promise<void> {
-    const ticker = settings.ticker.trim();
-    if (!ticker) {
-      summary = null;
-      return;
-    }
-
-    loading = true;
-    loadError = null;
-    try {
-      // Fetch all series in parallel — they're independent reads.
-      const [candles, sma20, sma200, volume, rsi, macd] = await Promise.all([
-        getCandles(ticker),
-        getSma(ticker, 20),
-        getSma(ticker, 200),
-        getVolumeBars(ticker),
-        getRsi(ticker, 14),
-        getMacd(ticker, 12, 26, 9),
-      ]);
-
-      if (candles.length === 0) {
-        summary = null;
-        return;
-      }
-
-      const trend = evaluateTrend(candles, sma20, sma200);
-      const vol = evaluateVolume(candles, volume);
-      const ind = evaluateIndicators(rsi, macd);
-      summary = summarize(trend, vol, ind);
-    } catch (err) {
-      loadError = err instanceof Error ? err.message : String(err);
-      console.error('WitnessPanel: recompute failed', err);
-    } finally {
-      loading = false;
-    }
-  }
-
-  // Recompute on mount and whenever the data state changes. Reading the
-  // runes inside the effect body (not just inside the async fn) is what
-  // registers them as dependencies.
-  $effect(() => {
-    const _fetched = dataState.lastFetched;
-    const _ticker = settings.ticker;
-    const _rowCount = dataState.rowCount;
-    void _fetched;
-    void _ticker;
-    void _rowCount;
-    void recompute();
-  });
+  import { evalState } from '../lib/evaluation.svelte';
 
   // Map verdict → dot color class. Kept as a function rather than a Map so
   // unknown values fall through harmlessly to neutral.
@@ -90,47 +26,47 @@
   }
 </script>
 
-<section class="witness-panel">
+<section class="witness-panel" id="witnesses">
   <header class="panel-header">
     <h2>Three-Witness Conviction</h2>
-    {#if loading}
+    {#if evalState.loading}
       <span class="status">Computing…</span>
     {/if}
   </header>
 
-  {#if loadError}
-    <div class="banner error" role="alert">Witness evaluation failed: {loadError}</div>
+  {#if evalState.error}
+    <div class="banner error" role="alert">Witness evaluation failed: {evalState.error}</div>
   {/if}
 
-  {#if !summary}
+  {#if !evalState.summary}
     <div class="placeholder">Awaiting data — refresh to compute witnesses.</div>
   {:else}
     <div class="witness-rows">
       <div class="witness-row">
         <span class="witness-name">Trend</span>
-        <span class={dotClass(summary.trend.verdict)}></span>
-        <span class="verdict">{verdictLabel(summary.trend.verdict)}</span>
-        <span class="reason">{summary.trend.reason}</span>
+        <span class={dotClass(evalState.summary.trend.verdict)}></span>
+        <span class="verdict">{verdictLabel(evalState.summary.trend.verdict)}</span>
+        <span class="reason">{evalState.summary.trend.reason}</span>
       </div>
 
       <div class="witness-row">
         <span class="witness-name">Volume</span>
-        <span class={dotClass(summary.volume.verdict)}></span>
-        <span class="verdict">{verdictLabel(summary.volume.verdict)}</span>
-        <span class="reason">{summary.volume.reason}</span>
+        <span class={dotClass(evalState.summary.volume.verdict)}></span>
+        <span class="verdict">{verdictLabel(evalState.summary.volume.verdict)}</span>
+        <span class="reason">{evalState.summary.volume.reason}</span>
       </div>
 
       <div class="witness-row">
         <span class="witness-name">Indicators</span>
-        <span class={dotClass(summary.indicators.verdict)}></span>
-        <span class="verdict">{verdictLabel(summary.indicators.verdict)}</span>
-        <span class="reason">{summary.indicators.reason}</span>
+        <span class={dotClass(evalState.summary.indicators.verdict)}></span>
+        <span class="verdict">{verdictLabel(evalState.summary.indicators.verdict)}</span>
+        <span class="reason">{evalState.summary.indicators.reason}</span>
       </div>
     </div>
 
-    <div class="conviction-box" data-conviction={summary.conviction}>
-      <div class="conviction-label">{summary.convictionLabel}</div>
-      <div class="conviction-recommendation">{summary.recommendation}</div>
+    <div class="conviction-box" data-conviction={evalState.summary.conviction}>
+      <div class="conviction-label">{evalState.summary.convictionLabel}</div>
+      <div class="conviction-recommendation">{evalState.summary.recommendation}</div>
     </div>
   {/if}
 </section>
@@ -139,12 +75,12 @@
   .witness-panel {
     display: flex;
     flex-direction: column;
-    gap: 14px;
-    padding: 20px;
-    background: #1a1b22;
-    border: 1px solid #2e303a;
-    border-radius: 8px;
-    color: #e5e7eb;
+    gap: var(--gap);
+    padding: var(--gap-lg);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-secondary);
     font-size: 14px;
     text-align: left;
   }
@@ -159,20 +95,20 @@
   h2 {
     margin: 0;
     font-size: 18px;
-    color: #f3f4f6;
+    color: var(--text);
   }
 
   .status {
     font-size: 12px;
-    color: #9ca3af;
+    color: var(--muted);
   }
 
   .placeholder {
     padding: 16px;
     background: rgba(15, 20, 25, 0.6);
-    border: 1px dashed #3a3d4a;
+    border: 1px dashed var(--border-strong);
     border-radius: 6px;
-    color: #9ca3af;
+    color: var(--muted);
     text-align: center;
     font-size: 13px;
   }
@@ -185,7 +121,7 @@
   }
 
   .banner.error {
-    background: rgba(239, 68, 68, 0.12);
+    background: var(--bear-soft);
     border-color: rgba(239, 68, 68, 0.4);
     color: #fca5a5;
   }
@@ -212,7 +148,7 @@
   }
 
   .witness-name {
-    color: #9ca3af;
+    color: var(--muted);
     font-size: 13px;
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -226,27 +162,27 @@
   }
 
   .dot-bullish {
-    background: #22c55e;
+    background: var(--bull);
     box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.2);
   }
 
   .dot-bearish {
-    background: #ef4444;
+    background: var(--bear);
     box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.2);
   }
 
   .dot-neutral {
-    background: #6b7280;
+    background: var(--neutral);
     box-shadow: 0 0 0 2px rgba(107, 114, 128, 0.2);
   }
 
   .verdict {
     font-weight: 600;
-    color: #f3f4f6;
+    color: var(--text);
   }
 
   .reason {
-    color: #9ca3af;
+    color: var(--muted);
     font-size: 12px;
     font-variant-numeric: tabular-nums;
   }
@@ -256,12 +192,12 @@
   .conviction-box {
     padding: 14px 16px;
     border-radius: 8px;
-    border: 1px solid #2e303a;
-    background: #1f2128;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
   }
 
   .conviction-box[data-conviction='high-bullish'] {
-    background: rgba(34, 197, 94, 0.18);
+    background: var(--bull-soft);
     border-color: rgba(34, 197, 94, 0.55);
   }
 
@@ -272,7 +208,7 @@
 
   .conviction-box[data-conviction='neutral'] {
     background: #23252e;
-    border-color: #3a3d4a;
+    border-color: var(--border-strong);
   }
 
   .conviction-box[data-conviction='moderate-bearish'] {
@@ -281,14 +217,14 @@
   }
 
   .conviction-box[data-conviction='high-bearish'] {
-    background: rgba(239, 68, 68, 0.18);
+    background: var(--bear-soft);
     border-color: rgba(239, 68, 68, 0.55);
   }
 
   .conviction-label {
     font-size: 16px;
     font-weight: 600;
-    color: #f3f4f6;
+    color: var(--text);
     margin-bottom: 4px;
   }
 

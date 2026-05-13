@@ -1,47 +1,44 @@
-# Svelte + TS + Vite
+# Finmarkets Monitor
 
-This template should help get you started developing with Svelte and TypeScript in Vite.
+Personal browser-based tool for monitoring a single equity position with a tax-overhang
+exit framework. Built for monitoring an AAPL RSU position but applicable to any single
+equity.
 
-## Recommended IDE Setup
+## Stack
 
-[VS Code](https://code.visualstudio.com/) + [Svelte](https://marketplace.visualstudio.com/items?itemName=svelte.svelte-vscode).
+- Svelte 5 + TypeScript + Vite
+- DuckDB-WASM (OPFS persistence) for storage and analytics
+- Lightweight Charts (TradingView OSS) for visualization
+- technicalindicators (npm) for RSI/MACD math
+- Twelve Data API for OHLCV (free tier, 800 req/day)
 
-## Need an official Svelte framework?
+## Setup
 
-Check out [SvelteKit](https://github.com/sveltejs/kit#readme), which is also powered by Vite. Deploy anywhere with its serverless-first approach and adapt to various platforms, with out of the box support for TypeScript, SCSS, and Less, and easily-added support for mdsvex, GraphQL, PostCSS, Tailwind CSS, and more.
+1. `npm install`
+2. `npm run dev`
+3. Open http://localhost:5173
+4. Get a free Twelve Data API key at https://twelvedata.com/
+5. Enter it in the Settings panel along with your vest price, shares, and tax rate
+6. Click "Refresh data" to pull historical OHLCV
+7. Review the Witness Panel and Chart for the current state
 
-## Technical considerations
+## Companion docs
 
-**Why use this over SvelteKit?**
+The methodology this app implements lives in:
 
-- It brings its own routing solution which might not be preferable for some users.
-- It is first and foremost a framework that just happens to use Vite under the hood, not a Vite app.
+- `~/docs/finmarkets/aapl-monitoring-guide.md` — three-phase educational guide
+- `~/docs/finmarkets/aapl-weekly-review.md` — the Sunday checklist template
 
-This template contains as little as possible to get started with Vite + TypeScript + Svelte, while taking into account the developer experience with regards to HMR and intellisense. It demonstrates capabilities on par with the other `create-vite` templates and is a good starting point for beginners dipping their toes into a Vite + Svelte project.
+## Disclaimers
 
-Should you later need the extended capabilities and extensibility provided by SvelteKit, the template has been structured similarly to SvelteKit so that it is easy to migrate.
+Educational use only. Not investment, tax, or legal advice. The app applies
+mechanical rules from the companion docs to live data; it does not replace
+personal judgment, professional advisors, or your reading of the underlying
+documents.
 
-**Why `global.d.ts` instead of `compilerOptions.types` inside `jsconfig.json` or `tsconfig.json`?**
+## Commands
 
-Setting `compilerOptions.types` shuts out all other types not explicitly listed in the configuration. Using triple-slash references keeps the default TypeScript setting of accepting type information from the entire workspace, while also adding `svelte` and `vite/client` type information.
-
-**Why include `.vscode/extensions.json`?**
-
-Other templates indirectly recommend extensions via the README, but this file allows VS Code to prompt the user to install the recommended extension upon opening the project.
-
-**Why enable `allowJs` in the TS template?**
-
-While `allowJs: false` would indeed prevent the use of `.js` files in the project, it does not prevent the use of JavaScript syntax in `.svelte` files. In addition, it would force `checkJs: false`, bringing the worst of both worlds: not being able to guarantee the entire codebase is TypeScript, and also having worse typechecking for the existing JavaScript. In addition, there are valid use cases in which a mixed codebase may be relevant.
-
-**Why is HMR not preserving my local component state?**
-
-HMR state preservation comes with a number of gotchas! It has been disabled by default in both `svelte-hmr` and `@sveltejs/vite-plugin-svelte` due to its often surprising behavior. You can read the details [here](https://github.com/rixo/svelte-hmr#svelte-hmr).
-
-If you have state that's important to retain within a component, consider creating an external store which would not be replaced by HMR.
-
-```ts
-// store.ts
-// An extremely simple external store
-import { writable } from 'svelte/store'
-export default writable(0)
-```
+- `npm run dev` — dev server
+- `npm run build` — production build
+- `npm run check` — type check
+- `npm test -- --run` — run vitest suite
