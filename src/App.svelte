@@ -1,6 +1,7 @@
 <script lang="ts">
   import SettingsPanel from './components/SettingsPanel.svelte';
   import DataPanel from './components/DataPanel.svelte';
+  import WitnessPanel from './components/WitnessPanel.svelte';
   import ChartPanel from './components/ChartPanel.svelte';
   import RsiPanel from './components/RsiPanel.svelte';
   import MacdPanel from './components/MacdPanel.svelte';
@@ -49,6 +50,8 @@
   <SettingsPanel />
 
   <DataPanel />
+
+  <WitnessPanel />
 
   <ChartPanel />
 
