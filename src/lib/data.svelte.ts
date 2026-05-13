@@ -54,7 +54,15 @@ export async function refreshData(): Promise<void> {
   try {
     const { rows } = await fetchDailyOhlcv(ticker, apiKey, 500);
     rowsInserted = await insertRows(ticker, rows);
-    await logFetch(ticker, rowsInserted, status);
+    // logFetch is best-effort: a failure here MUST NOT mark the refresh
+    // as failed when the data was inserted successfully. The audit log
+    // is informational; the user-visible state should reflect what's in
+    // the data table.
+    try {
+      await logFetch(ticker, rowsInserted, status);
+    } catch (logErr) {
+      console.warn('Failed to write fetch_log (non-fatal):', logErr);
+    }
     await refreshState();
   } catch (err) {
     status = 'error';

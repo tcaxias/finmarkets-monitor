@@ -17,16 +17,8 @@
     type LineData,
   } from 'lightweight-charts';
 
-  import { settings } from '../lib/settings.svelte';
-  import { dataState } from '../lib/data.svelte';
-  import {
-    getCloses,
-    computeRsi,
-    detectRsiDivergence,
-    type RsiPoint,
-    type ClosePoint,
-    type DivergenceFlag,
-  } from '../lib/indicators';
+  import { evalState } from '../lib/evaluation.svelte';
+  import type { DivergenceFlag } from '../lib/indicators';
 
   let chartContainer: HTMLDivElement | undefined = $state();
   let chart: IChartApi | undefined;
@@ -118,43 +110,36 @@
     );
   }
 
-  async function reloadAllData(): Promise<void> {
+  /**
+   * Render from the shared evaluation cache. RSI series and the
+   * divergence flag are both produced by `evaluation.svelte.ts`'s
+   * `recompute()` — this panel just renders them.
+   */
+  function renderFromCache(): void {
     if (!chart || !rsiSeries) return;
-    const ticker = settings.ticker.trim();
-    if (!ticker) {
+
+    const rsi = evalState.rsi;
+
+    if (rsi.length === 0) {
       hasData = false;
       latestRsi = null;
+      divergence = { bearish: false, bullish: false, description: '' };
+      rsiSeries.setData([]);
       return;
     }
 
     loadError = null;
-    try {
-      const closes: ClosePoint[] = await getCloses(ticker);
-      const rsi: RsiPoint[] = computeRsi(closes, 14);
+    rsiSeries.setData(
+      rsi.map((p) => ({
+        time: p.time as UTCTimestamp,
+        value: p.value,
+      })) as LineData[],
+    );
 
-      if (rsi.length === 0) {
-        hasData = false;
-        latestRsi = null;
-        divergence = { bearish: false, bullish: false, description: '' };
-        rsiSeries.setData([]);
-        return;
-      }
-
-      rsiSeries.setData(
-        rsi.map((p) => ({
-          time: p.time as UTCTimestamp,
-          value: p.value,
-        })) as LineData[],
-      );
-
-      latestRsi = rsi[rsi.length - 1].value;
-      divergence = detectRsiDivergence(rsi, closes, 30);
-      hasData = true;
-      chart.timeScale().fitContent();
-    } catch (err) {
-      loadError = err instanceof Error ? err.message : String(err);
-      console.error('RsiPanel: data load failed', err);
-    }
+    latestRsi = rsi[rsi.length - 1].value;
+    divergence = evalState.divergence ?? { bearish: false, bullish: false, description: '' };
+    hasData = true;
+    chart.timeScale().fitContent();
   }
 
   // Color and label for the current RSI reading. Keep thresholds aligned
@@ -181,7 +166,7 @@
     });
     resizeObserver.observe(chartContainer);
 
-    void reloadAllData();
+    renderFromCache();
 
     return () => {
       resizeObserver?.disconnect();
@@ -196,18 +181,12 @@
     };
   });
 
-  // Reload when the ticker changes or new data arrives. Same pattern as
-  // ChartPanel: read the runes in the effect body so Svelte registers the
-  // dependencies even though the work happens inside an async fn.
+  // Re-render whenever the shared evaluation cache refreshes.
   $effect(() => {
-    const _fetched = dataState.lastFetched;
-    const _ticker = settings.ticker;
-    const _rowCount = dataState.rowCount;
-    void _fetched;
-    void _ticker;
-    void _rowCount;
+    const _gen = evalState.generation;
+    void _gen;
     if (chart) {
-      void reloadAllData();
+      renderFromCache();
     }
   });
 </script>

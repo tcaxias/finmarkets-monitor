@@ -97,33 +97,52 @@ export async function getConn(): Promise<duckdb.AsyncDuckDBConnection> {
 /**
  * Idempotent schema bootstrap. Safe to call repeatedly; CREATE TABLE IF NOT EXISTS
  * makes this cheap on subsequent loads when OPFS already has the tables.
+ *
+ * If a connection is passed in, we use it. Otherwise we open a temporary
+ * connection and close it in a `finally` so we don't leak handles into the
+ * DuckDB-WASM worker.
  */
 export async function ensureSchema(
   conn?: duckdb.AsyncDuckDBConnection,
 ): Promise<void> {
   if (schemaPromise) return schemaPromise;
   schemaPromise = (async () => {
-    const c = conn ?? (await (await getDb()).connect());
-    await c.query(`
-      CREATE TABLE IF NOT EXISTS ohlcv (
-        ticker VARCHAR NOT NULL,
-        dt DATE NOT NULL,
-        open DOUBLE NOT NULL,
-        high DOUBLE NOT NULL,
-        low DOUBLE NOT NULL,
-        close DOUBLE NOT NULL,
-        volume BIGINT,
-        PRIMARY KEY (ticker, dt)
-      );
-    `);
-    await c.query(`
-      CREATE TABLE IF NOT EXISTS fetch_log (
-        ticker VARCHAR NOT NULL,
-        fetched_at TIMESTAMP NOT NULL,
-        rows_inserted INTEGER NOT NULL,
-        status VARCHAR NOT NULL
-      );
-    `);
+    let c: duckdb.AsyncDuckDBConnection;
+    let ownConnection = false;
+    if (conn) {
+      c = conn;
+    } else {
+      c = await (await getDb()).connect();
+      ownConnection = true;
+    }
+    try {
+      await c.query(`
+        CREATE TABLE IF NOT EXISTS ohlcv (
+          ticker VARCHAR NOT NULL,
+          dt DATE NOT NULL,
+          open DOUBLE NOT NULL,
+          high DOUBLE NOT NULL,
+          low DOUBLE NOT NULL,
+          close DOUBLE NOT NULL,
+          volume BIGINT,
+          PRIMARY KEY (ticker, dt)
+        );
+      `);
+      await c.query(`
+        CREATE TABLE IF NOT EXISTS fetch_log (
+          ticker VARCHAR NOT NULL,
+          fetched_at TIMESTAMP NOT NULL,
+          rows_inserted INTEGER NOT NULL,
+          status VARCHAR NOT NULL
+        );
+      `);
+    } finally {
+      if (ownConnection) {
+        await c.close().catch((err) => {
+          console.warn('ensureSchema: failed to close ad-hoc connection', err);
+        });
+      }
+    }
   })();
   return schemaPromise;
 }

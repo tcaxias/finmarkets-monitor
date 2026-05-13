@@ -9,21 +9,13 @@
   );
   const daysLeft = $derived(daysUntil(settings.taxDueDate));
 
-  // Settings are "configured" once the user has saved a vest price and
-  // share count. We use that as the signal to default the panel to
-  // collapsed — first-time users see the form open; returning users see
-  // a one-line summary that they can click to edit.
-  const configured = $derived(settings.vestPrice > 0 && settings.shares > 0);
-
-  // `<details open>` is a static HTML attribute, but we want the panel to
-  // start closed only once the user has configured the position. The
-  // `defaultOpen` snapshot is captured once on mount so re-saving doesn't
-  // collapse the panel mid-edit.
-  let defaultOpen = $state(true);
-  $effect(() => {
-    // Capture the configured-ness on mount only.
-    defaultOpen = !configured;
-  });
+  // Snapshot "is the position configured" exactly once at mount. We bind
+  // `<details open>` to a `$state` flag so the user can toggle the panel
+  // freely AND any later edits to settings.vestPrice/shares can't cause
+  // the panel to auto-collapse mid-edit. Reactive derivation here was the
+  // bug we're fixing — see code-review Major 2.
+  const initiallyConfigured = settings.vestPrice > 0 && settings.shares > 0;
+  let open = $state(!initiallyConfigured);
 
   // Persist on every change.
   $effect(() => {
@@ -54,7 +46,7 @@
   }
 </script>
 
-<details class="settings" open={defaultOpen} id="settings">
+<details class="settings" bind:open>
   <summary class="settings-summary">
     <span class="summary-label">Settings:</span>
     <span class="summary-line">{summaryLine()}</span>
@@ -120,6 +112,10 @@
           >twelvedata.com</a
         >
         (800 req/day on free tier).
+      </p>
+      <p class="hint warn">
+        Stored locally in plaintext in this browser profile. Don't paste keys for
+        shared accounts.
       </p>
     </fieldset>
 
@@ -309,5 +305,11 @@
 
   .hint a {
     color: var(--link);
+  }
+
+  /* Plaintext-storage warning under the API key input. Slightly amber tint
+     so it reads as a caution rather than an error. */
+  .hint.warn {
+    color: #fde68a;
   }
 </style>

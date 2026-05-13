@@ -40,15 +40,33 @@ export function computeThresholds(
 /**
  * Whole days between today (UTC) and the given ISO date (YYYY-MM-DD).
  * Returns NaN if the input is empty or unparseable, negative when overdue.
+ *
+ * For deterministic computation against a fixed reference date (e.g. in
+ * unit tests or a Sunday-review generator that pins a `reviewDate`), use
+ * `daysUntilFrom` instead.
  */
 export function daysUntil(isoDate: string): number {
-  if (!isoDate) return NaN;
-  const target = new Date(`${isoDate}T00:00:00Z`).getTime();
+  return daysUntilFrom(new Date(), isoDate);
+}
+
+/**
+ * Whole days from `baseDate` (UTC midnight) to `targetIso` (YYYY-MM-DD).
+ * Negative when target is in the past. NaN when target is empty or
+ * unparseable. Pinning the base date makes callers deterministic and
+ * trivially testable — see `sundayReview.generateSundayReview` which
+ * uses `inputs.reviewDate` to keep generated documents reproducible.
+ */
+export function daysUntilFrom(baseDate: Date, targetIso: string): number {
+  if (!targetIso) return NaN;
+  const target = new Date(`${targetIso}T00:00:00Z`).getTime();
   if (!Number.isFinite(target)) return NaN;
-  const now = new Date();
-  const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const baseUtc = Date.UTC(
+    baseDate.getUTCFullYear(),
+    baseDate.getUTCMonth(),
+    baseDate.getUTCDate(),
+  );
   const msPerDay = 86_400_000;
-  return Math.ceil((target - todayUtc) / msPerDay);
+  return Math.ceil((target - baseUtc) / msPerDay);
 }
 
 export function formatUsd(value: number): string {

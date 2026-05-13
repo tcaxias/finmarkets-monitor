@@ -24,7 +24,11 @@ export interface MaPoint {
 
 export interface VolumeBar {
   time: number;
-  value: number;
+  // `null` when the source row had no volume (e.g. older Twelve Data bars
+  // sometimes omit the field). Consumers MUST distinguish "no data" from
+  // zero — coercing to 0 silently corrupts averages and the
+  // accumulation/distribution witness.
+  value: number | null;
   color: string;
 }
 
@@ -38,6 +42,15 @@ function toNum(v: unknown): number {
   if (typeof v === 'bigint') return Number(v);
   if (typeof v === 'number') return v;
   return Number(v);
+}
+
+// Like `toNum` but preserves null/undefined as null. Used for nullable
+// columns (volume) where downstream math depends on knowing "missing"
+// vs "zero" — a missing bar shouldn't drag a 20-day average down.
+function toNullableNum(v: unknown): number | null {
+  if (v === null || v === undefined) return null;
+  const n = toNum(v);
+  return Number.isFinite(n) ? n : null;
 }
 
 export async function getCandles(ticker: string): Promise<Candle[]> {
@@ -119,7 +132,7 @@ export async function getVolumeBars(ticker: string): Promise<VolumeBar[]> {
       const r = row.toJSON() as Record<string, unknown>;
       return {
         time: toNum(r.time),
-        value: toNum(r.volume),
+        value: toNullableNum(r.volume),
         color: r.up ? VOLUME_UP : VOLUME_DOWN,
       };
     });

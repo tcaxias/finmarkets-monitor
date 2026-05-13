@@ -25,7 +25,7 @@ import type { WitnessSummary } from './witnesses';
 import type { Candle, MaPoint } from './queries';
 import type { RsiPoint, MacdPoint } from './indicators';
 import type { Thresholds } from './math';
-import { daysUntil } from './math';
+import { daysUntilFrom } from './math';
 import { detectRsiDivergence, type ClosePoint } from './indicators';
 
 export interface ReviewInputs {
@@ -36,7 +36,9 @@ export interface ReviewInputs {
   candles: Candle[];
   sma20: MaPoint[];
   sma200: MaPoint[];
-  volume: { time: number; value: number; color: string }[];
+  // `value` is `number | null` because some source rows omit volume; the
+  // generator MUST skip nulls when averaging or picking the heaviest day.
+  volume: { time: number; value: number | null; color: string }[];
   rsi: RsiPoint[];
   macd: MacdPoint[];
   witnesses: WitnessSummary;
@@ -187,7 +189,12 @@ function section1Tradeability(): string {
 // ---------- section 2: time-pressure ----------
 
 function section2TimePressure(inputs: ReviewInputs): string {
-  const days = inputs.taxDueDate ? daysUntil(inputs.taxDueDate) : NaN;
+  // Use `daysUntilFrom(reviewDate, ...)` not `daysUntil(...)` so the
+  // generated document is reproducible against the pinned review date —
+  // calling `daysUntil` would silently use `new Date()` and make the
+  // output depend on when the function ran.
+  const days =
+    inputs.taxDueDate ? daysUntilFrom(inputs.reviewDate, inputs.taxDueDate) : NaN;
   const daysStr = Number.isFinite(days) ? `${days}` : '______';
 
   // Auto-check the right bucket based on the day count. Buckets are
@@ -353,30 +360,45 @@ function section5SupportResistance(): string {
 
 function section6Volume(inputs: ReviewInputs): string {
   // Compare last week's avg daily volume to the trailing 50-day avg.
+  // Null-volume bars are excluded from both averages — a missing source
+  // row shouldn't drag the average toward zero and skew the comparison.
   let weekHeavier = false;
   let weekNormal = false;
   let weekLighter = false;
   if (inputs.volume.length >= VOLUME_AVG_WINDOW) {
     const recent = inputs.volume.slice(-RECENT_VOLUME_WINDOW);
     const trailing = inputs.volume.slice(-VOLUME_AVG_WINDOW);
-    const recentAvg = avg(recent.map((v) => v.value));
-    const trailingAvg = avg(trailing.map((v) => v.value));
-    const ratio = trailingAvg > 0 ? recentAvg / trailingAvg : 1;
-    weekHeavier = ratio > 1 + VOLUME_MARGIN_PCT;
-    weekLighter = ratio < 1 - VOLUME_MARGIN_PCT;
-    weekNormal = !weekHeavier && !weekLighter;
+    const recentVals = recent
+      .map((v) => v.value)
+      .filter((v): v is number => v !== null);
+    const trailingVals = trailing
+      .map((v) => v.value)
+      .filter((v): v is number => v !== null);
+    if (recentVals.length > 0 && trailingVals.length > 0) {
+      const recentAvg = avg(recentVals);
+      const trailingAvg = avg(trailingVals);
+      const ratio = trailingAvg > 0 ? recentAvg / trailingAvg : 1;
+      weekHeavier = ratio > 1 + VOLUME_MARGIN_PCT;
+      weekLighter = ratio < 1 - VOLUME_MARGIN_PCT;
+      weekNormal = !weekHeavier && !weekLighter;
+    }
   }
 
   // Heaviest day in the last 5 sessions and its color (green = up, red =
   // down). We use the color field rather than reading candles because
-  // queries.ts already encoded the up/down classification there.
+  // queries.ts already encoded the up/down classification there. Skip
+  // null-volume bars so they can't accidentally be picked as "heaviest".
   let heaviestGreen = false;
   let heaviestRed = false;
   if (inputs.volume.length > 0) {
-    const recent = inputs.volume.slice(-RECENT_VOLUME_WINDOW);
-    const heaviest = recent.reduce((max, v) => (v.value > max.value ? v : max), recent[0]);
-    heaviestGreen = heaviest.color === COLOR_GREEN;
-    heaviestRed = !heaviestGreen;
+    const recent = inputs.volume
+      .slice(-RECENT_VOLUME_WINDOW)
+      .filter((v): v is { time: number; value: number; color: string } => v.value !== null);
+    if (recent.length > 0) {
+      const heaviest = recent.reduce((max, v) => (v.value > max.value ? v : max), recent[0]);
+      heaviestGreen = heaviest.color === COLOR_GREEN;
+      heaviestRed = !heaviestGreen;
+    }
   }
 
   // Volume bucket from the witness verdict — same internal-consistency
@@ -688,11 +710,15 @@ function activeRedFlags(inputs: ReviewInputs): string[] {
 
   if (latest.close < 20 && latest.close < latest.open) {
     // Check that latest volume is above the trailing-20 average; if we
-    // can't tell (insufficient history), flag conservatively on price
-    // alone rather than miss a real warning.
+    // can't tell (insufficient history or all-null volume), flag
+    // conservatively on price alone rather than miss a real warning.
+    // Null volumes are excluded from the average.
     const recent = inputs.volume.slice(-20);
     const lastVol = inputs.volume[inputs.volume.length - 1]?.value;
-    const avgVol = recent.length > 0 ? avg(recent.map((v) => v.value)) : NaN;
+    const recentVals = recent
+      .map((v) => v.value)
+      .filter((v): v is number => v !== null);
+    const avgVol = recentVals.length > 0 ? avg(recentVals) : NaN;
     if (!Number.isFinite(avgVol) || (typeof lastVol === 'number' && lastVol > avgVol)) {
       flags.push(`Daily close ${fmtUsd(latest.close)} below $20.00 with elevated red volume`);
     }

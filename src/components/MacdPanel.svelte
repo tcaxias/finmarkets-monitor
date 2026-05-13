@@ -18,9 +18,8 @@
     type HistogramData,
   } from 'lightweight-charts';
 
-  import { settings } from '../lib/settings.svelte';
-  import { dataState } from '../lib/data.svelte';
-  import { getMacd, type MacdPoint } from '../lib/indicators';
+  import { evalState } from '../lib/evaluation.svelte';
+  import type { MacdPoint } from '../lib/indicators';
 
   let chartContainer: HTMLDivElement | undefined = $state();
   let chart: IChartApi | undefined;
@@ -116,52 +115,41 @@
     return null;
   }
 
-  async function reloadAllData(): Promise<void> {
+  /** Render from the shared evaluation cache. */
+  function renderFromCache(): void {
     if (!chart || !macdSeries || !signalSeries || !histSeries) return;
-    const ticker = settings.ticker.trim();
-    if (!ticker) {
+
+    const macd = evalState.macd;
+
+    if (macd.length === 0) {
       hasData = false;
       latest = null;
       crossover = null;
+      macdSeries.setData([]);
+      signalSeries.setData([]);
+      histSeries.setData([]);
       return;
     }
 
     loadError = null;
-    try {
-      const macd = await getMacd(ticker, 12, 26, 9);
+    macdSeries.setData(
+      macd.map((p) => ({ time: p.time as UTCTimestamp, value: p.macd })) as LineData[],
+    );
+    signalSeries.setData(
+      macd.map((p) => ({ time: p.time as UTCTimestamp, value: p.signal })) as LineData[],
+    );
+    histSeries.setData(
+      macd.map((p) => ({
+        time: p.time as UTCTimestamp,
+        value: p.histogram,
+        color: p.histogram >= 0 ? COLORS.histPos : COLORS.histNeg,
+      })) as HistogramData[],
+    );
 
-      if (macd.length === 0) {
-        hasData = false;
-        latest = null;
-        crossover = null;
-        macdSeries.setData([]);
-        signalSeries.setData([]);
-        histSeries.setData([]);
-        return;
-      }
-
-      macdSeries.setData(
-        macd.map((p) => ({ time: p.time as UTCTimestamp, value: p.macd })) as LineData[],
-      );
-      signalSeries.setData(
-        macd.map((p) => ({ time: p.time as UTCTimestamp, value: p.signal })) as LineData[],
-      );
-      histSeries.setData(
-        macd.map((p) => ({
-          time: p.time as UTCTimestamp,
-          value: p.histogram,
-          color: p.histogram >= 0 ? COLORS.histPos : COLORS.histNeg,
-        })) as HistogramData[],
-      );
-
-      latest = macd[macd.length - 1];
-      crossover = detectCrossover(macd);
-      hasData = true;
-      chart.timeScale().fitContent();
-    } catch (err) {
-      loadError = err instanceof Error ? err.message : String(err);
-      console.error('MacdPanel: data load failed', err);
-    }
+    latest = macd[macd.length - 1];
+    crossover = detectCrossover(macd);
+    hasData = true;
+    chart.timeScale().fitContent();
   }
 
   $effect(() => {
@@ -176,7 +164,7 @@
     });
     resizeObserver.observe(chartContainer);
 
-    void reloadAllData();
+    renderFromCache();
 
     return () => {
       resizeObserver?.disconnect();
@@ -194,14 +182,10 @@
   });
 
   $effect(() => {
-    const _fetched = dataState.lastFetched;
-    const _ticker = settings.ticker;
-    const _rowCount = dataState.rowCount;
-    void _fetched;
-    void _ticker;
-    void _rowCount;
+    const _gen = evalState.generation;
+    void _gen;
     if (chart) {
-      void reloadAllData();
+      renderFromCache();
     }
   });
 </script>

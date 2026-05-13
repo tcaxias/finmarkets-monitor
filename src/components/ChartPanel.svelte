@@ -20,9 +20,8 @@
   } from 'lightweight-charts';
 
   import { settings } from '../lib/settings.svelte';
-  import { dataState } from '../lib/data.svelte';
   import { computeThresholds, type Thresholds } from '../lib/math';
-  import { getCandles, getSma, getVolumeBars } from '../lib/queries';
+  import { evalState } from '../lib/evaluation.svelte';
 
   let chartContainer: HTMLDivElement | undefined = $state();
   let chart: IChartApi | undefined;
@@ -106,57 +105,56 @@
     });
   }
 
-  async function reloadAllData(): Promise<void> {
+  /**
+   * Render the chart from the shared evaluation cache (`evalState`). The
+   * cache is the single source of truth for series data — this panel is
+   * pure rendering, with no DB queries of its own. App.svelte triggers
+   * `recompute()` when the ticker changes or new data arrives, which
+   * bumps `evalState.generation` and lets us know to re-render.
+   */
+  function renderFromCache(): void {
     if (!chart || !candleSeries || !sma20Series || !sma200Series || !volumeSeries) {
       return;
     }
-    const ticker = settings.ticker.trim();
-    if (!ticker) {
+
+    const candles = evalState.candles;
+    const sma20 = evalState.sma20;
+    const sma200 = evalState.sma200;
+    const vol = evalState.volume;
+
+    if (candles.length === 0) {
       hasData = false;
+      // Setting empty arrays clears the series cleanly.
+      candleSeries.setData([]);
+      sma20Series.setData([]);
+      sma200Series.setData([]);
+      volumeSeries.setData([]);
       return;
     }
 
     loadError = null;
-    try {
-      const [candles, sma20, sma200, vol] = await Promise.all([
-        getCandles(ticker),
-        getSma(ticker, 20),
-        getSma(ticker, 200),
-        getVolumeBars(ticker),
-      ]);
+    // The `time as UTCTimestamp` cast is required by Lightweight Charts'
+    // nominal-typed time field; queries.ts guarantees unix-second numbers.
+    candleSeries.setData(
+      candles.map((c) => ({ ...c, time: c.time as UTCTimestamp })) as CandlestickData[],
+    );
+    sma20Series.setData(
+      sma20.map((p) => ({ ...p, time: p.time as UTCTimestamp })) as LineData[],
+    );
+    sma200Series.setData(
+      sma200.map((p) => ({ ...p, time: p.time as UTCTimestamp })) as LineData[],
+    );
+    // VolumeBar.value can be null when the source row had no volume.
+    // Lightweight Charts doesn't render gaps for null cleanly in a
+    // histogram series — just omit those bars.
+    volumeSeries.setData(
+      vol
+        .filter((v): v is { time: number; value: number; color: string } => v.value !== null)
+        .map((v) => ({ ...v, time: v.time as UTCTimestamp })) as HistogramData[],
+    );
 
-      if (candles.length === 0) {
-        hasData = false;
-        // Setting empty arrays clears the series cleanly.
-        candleSeries.setData([]);
-        sma20Series.setData([]);
-        sma200Series.setData([]);
-        volumeSeries.setData([]);
-        return;
-      }
-
-      // The `time as UTCTimestamp` cast is required by Lightweight Charts'
-      // nominal-typed time field; our queries.ts contract guarantees
-      // unix-second numbers here.
-      candleSeries.setData(
-        candles.map((c) => ({ ...c, time: c.time as UTCTimestamp })) as CandlestickData[],
-      );
-      sma20Series.setData(
-        sma20.map((p) => ({ ...p, time: p.time as UTCTimestamp })) as LineData[],
-      );
-      sma200Series.setData(
-        sma200.map((p) => ({ ...p, time: p.time as UTCTimestamp })) as LineData[],
-      );
-      volumeSeries.setData(
-        vol.map((v) => ({ ...v, time: v.time as UTCTimestamp })) as HistogramData[],
-      );
-
-      hasData = true;
-      chart.timeScale().fitContent();
-    } catch (err) {
-      loadError = err instanceof Error ? err.message : String(err);
-      console.error('ChartPanel: data load failed', err);
-    }
+    hasData = true;
+    chart.timeScale().fitContent();
   }
 
   function clearPriceLines(): void {
@@ -215,11 +213,13 @@
     });
     resizeObserver.observe(chartContainer);
 
-    // Initial paint: pull whatever's already in OPFS.
-    void reloadAllData().then(() => {
-      const t = computeThresholds(settings.vestPrice, settings.shares, settings.taxRate);
-      applyPriceLines(t);
-    });
+    // Initial paint: render whatever the shared cache already has. The
+    // App.svelte recompute effect will trigger again if/when the cache
+    // updates and bumps `generation`, which the second $effect below
+    // observes.
+    renderFromCache();
+    const t = computeThresholds(settings.vestPrice, settings.shares, settings.taxRate);
+    applyPriceLines(t);
 
     return () => {
       resizeObserver?.disconnect();
@@ -234,18 +234,16 @@
     };
   });
 
-  // Reload data whenever a fetch completes or the ticker changes. Reading the
-  // runes in the body (not just inside the async fn) is what registers the
-  // dependency with Svelte's reactivity tracker.
+  // Re-render whenever the shared evaluation cache refreshes. We watch
+  // `evalState.generation` (bumped at the end of every successful
+  // `recompute()`) instead of every individual array reference — that
+  // way one effect handles "ticker changed", "new data fetched", and
+  // any future reasons the cache might rebuild.
   $effect(() => {
-    const _fetched = dataState.lastFetched;
-    const _ticker = settings.ticker;
-    const _rowCount = dataState.rowCount;
-    void _fetched;
-    void _ticker;
-    void _rowCount;
+    const _gen = evalState.generation;
+    void _gen;
     if (chart) {
-      void reloadAllData();
+      renderFromCache();
     }
   });
 

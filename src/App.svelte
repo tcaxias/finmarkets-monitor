@@ -109,7 +109,7 @@
       <StatusBanner />
     </section>
 
-    <section class="container narrow stack">
+    <section class="container narrow stack" id="settings">
       <SettingsPanel />
     </section>
 
@@ -117,7 +117,7 @@
       <DataPanel />
     </section>
 
-    <section class="container narrow stack">
+    <section class="container narrow stack" id="witnesses">
       <WitnessPanel />
     </section>
 
@@ -132,7 +132,7 @@
       <MacdPanel />
     </section>
 
-    <section class="container narrow stack">
+    <section class="container narrow stack" id="review">
       <ReviewExport />
     </section>
 

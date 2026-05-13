@@ -208,7 +208,9 @@ describe('evaluateIndicators', () => {
     const result = evaluateIndicators(rsi, macd);
     expect(result.verdict).toBe('bullish');
     expect(result.reason).toContain('rising');
-    expect(result.reason).toContain('expanding');
+    // Histogram detail now travels with a "strengthening/weakening" gloss
+    // rather than the bare "expanding" label.
+    expect(result.reason).toContain('strengthening');
   });
 
   it('flags bearish: RSI < 50 falling AND MACD < 0 expanding (negative)', () => {
@@ -227,7 +229,8 @@ describe('evaluateIndicators', () => {
     const result = evaluateIndicators(rsi, macd);
     expect(result.verdict).toBe('bearish');
     expect(result.reason).toContain('falling');
-    expect(result.reason).toContain('below zero');
+    // MACD < 0 reads as "bearish" in the reason now (was "below zero").
+    expect(result.reason).toContain('bearish');
   });
 
   it('tiebreak: RSI bullish but MACD bearish → follow MACD line sign (bearish)', () => {
@@ -248,10 +251,10 @@ describe('evaluateIndicators', () => {
     expect(result.verdict).toBe('bearish');
   });
 
-  it('tiebreak: RSI bullish but MACD bearish, MACD line positive → MACD says bullish via line sign', () => {
-    // Edge case: RSI says bullish, MACD line is positive but histogram is
-    // contracting (so MACD verdict on its own would be neutral). With
-    // RSI bullish + MACD neutral, we take the non-neutral verdict (RSI).
+  it('tiebreak: RSI bullish, MACD line > 0 with histogram contracting → bullish (both positive)', () => {
+    // Both RSI and MACD line agree (positive). Histogram contracting just
+    // means the bullish trend is weakening — the verdict is still bullish
+    // under the new policy (line sign is the baseline regime).
     const rsi: RsiPoint[] = [
       { time: 1, value: 52 },
       { time: 2, value: 55 },
@@ -264,6 +267,47 @@ describe('evaluateIndicators', () => {
     ];
     const result = evaluateIndicators(rsi, macd);
     expect(result.verdict).toBe('bullish');
+    expect(result.reason).toContain('weakening');
+  });
+
+  // New test: previously-undercalled bearish case.
+  it('MACD < 0 with histogram contracting still reads as bearish (line sign is the regime)', () => {
+    // RSI is neutral (50 / flat). MACD line is below zero but the
+    // histogram is contracting (bearish trend losing steam). Old policy
+    // gated MACD verdict on histogram expansion and would have returned
+    // neutral; new policy returns bearish with a "weakening trend"
+    // qualifier in the reason.
+    const rsi: RsiPoint[] = [
+      { time: 1, value: 50 },
+      { time: 2, value: 50 },
+      { time: 3, value: 50 },
+    ];
+    const macd: MacdPoint[] = [
+      { time: 1, macd: -0.5, signal: -0.3, histogram: -0.2 },
+      { time: 2, macd: -0.45, signal: -0.3, histogram: -0.15 }, // hist contracting (less negative)
+      { time: 3, macd: -0.4, signal: -0.3, histogram: -0.10 },
+    ];
+    const result = evaluateIndicators(rsi, macd);
+    expect(result.verdict).toBe('bearish');
+    expect(result.reason).toContain('weakening');
+    expect(result.reason).toContain('bearish');
+  });
+
+  // New test: bullish line, expanding histogram → strengthening trend gloss.
+  it('MACD > 0 with histogram expanding reads as bullish + strengthening trend', () => {
+    const rsi: RsiPoint[] = [
+      { time: 1, value: 50 },
+      { time: 2, value: 50 },
+      { time: 3, value: 50 },
+    ];
+    const macd: MacdPoint[] = [
+      { time: 1, macd: 0.2, signal: 0.05, histogram: 0.15 },
+      { time: 2, macd: 0.4, signal: 0.10, histogram: 0.30 },
+      { time: 3, macd: 0.6, signal: 0.15, histogram: 0.45 },
+    ];
+    const result = evaluateIndicators(rsi, macd);
+    expect(result.verdict).toBe('bullish');
+    expect(result.reason).toContain('strengthening');
   });
 
   it('returns neutral with empty inputs', () => {

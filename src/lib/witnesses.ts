@@ -131,12 +131,17 @@ export function evaluateVolume(candles: Candle[], volume: VolumeBar[]): WitnessR
   // Align candles to volume bars by timestamp. In practice both series come
   // from the same `ohlcv` table and are already aligned, but defensive
   // alignment keeps the function robust against future query changes.
-  const volByTime = new Map<number, number>();
+  //
+  // Volume is `number | null` — null means the source row had no volume,
+  // which we must skip (not coerce to zero) so a missing bar doesn't drag
+  // the trailing average toward zero and bias the witness.
+  const volByTime = new Map<number, number | null>();
   for (const v of volume) volByTime.set(v.time, v.value);
 
   // Pre-compute trailing 20-day average volume ending at each candle index.
   // We use a simple O(n*w) loop because n is small (~500) and clarity
-  // matters more than micro-optimization here.
+  // matters more than micro-optimization here. Null-volume bars are
+  // excluded from both numerator and denominator.
   const avgVolumeAt: number[] = new Array(candles.length).fill(NaN);
   for (let i = 0; i < candles.length; i++) {
     const start = Math.max(0, i - VOLUME_AVG_WINDOW + 1);
@@ -195,11 +200,16 @@ export function evaluateVolume(candles: Candle[], volume: VolumeBar[]): WitnessR
  * weights MACD when the two disagree.
  *
  *  - RSI bullish if value > 50 AND rising; bearish if < 50 AND falling
- *  - MACD bullish if line > 0 AND histogram expanding (same sign as previous,
- *    larger magnitude); bearish if line < 0 AND histogram contracting
- *  - Tiebreak: if the two disagree, follow MACD line sign (the trend-
- *    following indicator dominates over the momentum oscillator on the
- *    holding-period horizon)
+ *  - MACD verdict is the **sign of the MACD line** (the baseline regime).
+ *    The histogram modifies confidence (expanding = strengthening,
+ *    contracting = weakening) but is reported in the reason string, NOT
+ *    used as a gate on the direction. Per the companion guide: a MACD
+ *    line below zero IS bearish even if the histogram is contracting —
+ *    contracting just means the bearish trend is losing steam, not that
+ *    it has flipped to neutral.
+ *  - Tiebreak: if RSI and MACD agree → use that. If they disagree → follow
+ *    MACD line sign (trend-following dominates momentum oscillator on the
+ *    holding-period horizon). If MACD line is exactly zero → take RSI.
  */
 export function evaluateIndicators(rsi: RsiPoint[], macd: MacdPoint[]): WitnessResult {
   if (rsi.length === 0 || macd.length === 0) {
@@ -218,41 +228,55 @@ export function evaluateIndicators(rsi: RsiPoint[], macd: MacdPoint[]): WitnessR
   if (rsiNow > 50 && rsiRising) rsiVerdict = 'bullish';
   else if (rsiNow < 50 && rsiFalling) rsiVerdict = 'bearish';
 
-  // MACD posture: line sign + histogram expansion/contraction.
+  // MACD posture: histogram trend is strength-only (used in the reason
+  // string), line sign is the verdict.
   const macdLast = macd[macd.length - 1];
   const macdPrev = macd.length >= 2 ? macd[macd.length - 2] : macdLast;
-  const histExpanding =
-    Math.sign(macdLast.histogram) === Math.sign(macdPrev.histogram) &&
-    Math.abs(macdLast.histogram) > Math.abs(macdPrev.histogram);
-  const histContracting =
-    Math.sign(macdLast.histogram) === Math.sign(macdPrev.histogram) &&
-    Math.abs(macdLast.histogram) < Math.abs(macdPrev.histogram);
+  const sameSign =
+    Math.sign(macdLast.histogram) === Math.sign(macdPrev.histogram);
+  const histExpanding = sameSign && Math.abs(macdLast.histogram) > Math.abs(macdPrev.histogram);
+  const histContracting = sameSign && Math.abs(macdLast.histogram) < Math.abs(macdPrev.histogram);
   const histTrend = histExpanding ? 'expanding' : histContracting ? 'contracting' : 'flat';
 
-  let macdVerdict: Verdict = 'neutral';
-  if (macdLast.macd > 0 && histExpanding) macdVerdict = 'bullish';
-  else if (macdLast.macd < 0 && histExpanding) macdVerdict = 'bearish';
-  // Note: when histogram is contracting the trend is weakening — neutral.
+  // MACD verdict by line sign — the baseline regime. Histogram is a
+  // strength modifier (described in the reason string), not a gate.
+  const macdVerdict: Verdict =
+    macdLast.macd > 0 ? 'bullish' :
+    macdLast.macd < 0 ? 'bearish' :
+    'neutral';
 
-  // Tiebreak when RSI and MACD disagree (one bullish, one bearish): follow
-  // MACD line sign. When one is neutral and the other isn't, take the non-
-  // neutral verdict. When both are neutral, the verdict is neutral.
+  // Combine. When they agree → that. When MACD line is neutral (== 0) →
+  // take RSI. When one is neutral and the other isn't → take the non-
+  // neutral one. When they disagree → MACD wins.
   let combined: Verdict;
   if (rsiVerdict === macdVerdict) {
     combined = rsiVerdict;
-  } else if (rsiVerdict === 'neutral') {
-    combined = macdVerdict;
   } else if (macdVerdict === 'neutral') {
     combined = rsiVerdict;
+  } else if (rsiVerdict === 'neutral') {
+    combined = macdVerdict;
   } else {
-    // Genuine disagreement → MACD wins via line sign.
-    combined = macdLast.macd > 0 ? 'bullish' : macdLast.macd < 0 ? 'bearish' : 'neutral';
+    // Genuine disagreement → MACD line sign wins.
+    combined = macdVerdict;
   }
 
+  // Reason string: include histogram state as colour on the MACD verdict
+  // ("bearish, histogram contracting = weakening trend"). When the
+  // histogram is expanding in the same direction as the line, that
+  // strengthens the verdict; when contracting, the trend is weakening
+  // but hasn't reversed.
+  const macdSignLabel =
+    macdVerdict === 'bullish' ? 'bullish' :
+    macdVerdict === 'bearish' ? 'bearish' :
+    'neutral';
+  const histColour =
+    histExpanding ? `histogram expanding = strengthening trend` :
+    histContracting ? `histogram contracting = weakening trend` :
+    `histogram flat`;
   const reason =
     `RSI ${rsiNow.toFixed(0)} (${rsiDirection}), ` +
     `MACD line ${macdLast.macd >= 0 ? '+' : ''}${macdLast.macd.toFixed(2)} ` +
-    `${macdLast.macd >= 0 ? 'above' : 'below'} zero, histogram ${histTrend}`;
+    `(${macdSignLabel}, ${histColour})`;
 
   return { verdict: combined, reason };
 }
