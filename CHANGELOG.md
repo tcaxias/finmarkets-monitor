@@ -5,7 +5,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-(intentionally empty — fill as work lands toward v0.2.0)
+### Added
+
+- **Drawdown column in Portfolio Overview.** New "Drawdown" column
+  between Distance and Conviction shows each position's current % off
+  its rolling 252-trading-day high, plus days since that high was set.
+  Color-coded by severity: green near the high (> -5%), neutral for
+  routine pullbacks (-5% to -15%), amber notable (-15% to -30%), red
+  significant (< -30%). Sortable like the other columns. Backed by a
+  new `getDrawdowns()` helper in `src/lib/queries.ts` that runs a
+  single SQL pass over `ohlcv` using `MAX(close) OVER (... 251
+  PRECEDING)` so the window degrades gracefully for tickers with less
+  than 252 bars of history (no fake "0% drawdown" for newly added
+  positions). Refetches whenever `dataState.lastFetched` advances.
+  Five new integration tests in
+  `src/lib/__tests__/drawdowns.integration.test.ts` cover at-high,
+  in-drawdown (with exact magnitude assertion), short-history graceful
+  degrade, per-ticker isolation via PARTITION BY, and the empty-table
+  case. No schema migration needed. Tests: 274 (up from 269).
 
 ## [0.1.0] - 2026-05-14
 

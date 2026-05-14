@@ -11,6 +11,7 @@
   import { dataState } from '../lib/data.svelte';
   import { viewState } from '../lib/viewState.svelte';
   import { computeThresholds } from '../lib/math';
+  import { getDrawdowns, type DrawdownRow } from '../lib/queries';
   // TickerLinks intentionally NOT imported here — the per-row external
   // links crowded the dense overview table. Kept available in
   // StatusBanner only for now.
@@ -21,6 +22,7 @@
     | 'dayChange'
     | 'pcover'
     | 'distance'
+    | 'drawdown'
     | 'conviction'
     | 'updated';
 
@@ -36,6 +38,46 @@
     return () => clearInterval(id);
   });
 
+  // Per-ticker drawdown from the rolling 252-trading-day high. Computed
+  // server-side via a single SQL pass over the ohlcv table — see
+  // `getDrawdowns` in queries.ts. We refetch whenever the data
+  // watermark changes (any ticker refresh bumps `dataState.lastFetched`)
+  // so the column stays in sync with the rest of the table.
+  //
+  // The fetch is best-effort: a query error leaves the map empty and
+  // each row falls through to the "—" placeholder rather than blocking
+  // the rest of the panel. We log to console.warn so a developer can
+  // see what failed; we intentionally do not surface a UI banner —
+  // drawdown is auxiliary, not a blocker for the core overview.
+  let drawdowns = $state<Record<string, DrawdownRow>>({});
+  $effect(() => {
+    // Register dependency on the global lastFetched watermark so the
+    // map refreshes after every successful refresh. Reading
+    // `settings.positions.length` registers a dep on the position
+    // count too, so adding a new ticker triggers a refetch even
+    // before its first data refresh (the new ticker just won't be in
+    // the result yet — that's fine, falls through to "—").
+    void dataState.lastFetched;
+    void settings.positions.length;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const rows = await getDrawdowns();
+        if (cancelled) return;
+        const next: Record<string, DrawdownRow> = {};
+        for (const r of rows) next[r.ticker] = r;
+        drawdowns = next;
+      } catch (err) {
+        if (cancelled) return;
+        // Intentionally non-fatal — drawdown is decorative, not core.
+        console.warn('getDrawdowns failed', err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  });
+
   interface Row {
     pos: Position;
     price: number | null;
@@ -43,9 +85,28 @@
     pcover: number;
     distance: number | null; // price - pcover
     distanceTone: 'good' | 'warn' | 'bad' | 'muted';
+    drawdownPct: number | null;
+    daysSinceHigh: number | null;
+    drawdownTone: 'good' | 'muted' | 'warn' | 'bad';
     conviction: string | null;
     convictionRank: number;
     updated: Date | null;
+  }
+
+  /**
+   * Map a drawdown percent (≤ 0) to a severity tone. Thresholds match
+   * the spec: > -5% green (near high), -5..-15 muted (normal pullback),
+   * -15..-30 amber (notable), < -30 red (significant). `null` (no data)
+   * collapses to muted.
+   */
+  function drawdownTone(
+    pct: number | null,
+  ): 'good' | 'muted' | 'warn' | 'bad' {
+    if (pct === null || !Number.isFinite(pct)) return 'muted';
+    if (pct > -5) return 'good';
+    if (pct > -15) return 'muted';
+    if (pct > -30) return 'warn';
+    return 'bad';
   }
 
   // Map conviction enum → numeric rank for sorting (most bullish = 4,
@@ -125,6 +186,9 @@
         else distanceTone = 'good';
       }
       const conviction = slice.summary?.conviction ?? null;
+      const dd = drawdowns[pos.ticker];
+      const drawdownPct = dd ? dd.drawdownPct : null;
+      const daysSinceHigh = dd ? dd.daysSinceHigh : null;
       return {
         pos,
         price,
@@ -132,6 +196,9 @@
         pcover: thresholds.pcover,
         distance,
         distanceTone,
+        drawdownPct,
+        daysSinceHigh,
+        drawdownTone: drawdownTone(drawdownPct),
         conviction,
         convictionRank: convictionRank(conviction),
         updated: dataState.lastFetchedByTicker[pos.ticker] ?? null,
@@ -152,6 +219,8 @@
         return dir * (a.pcover - b.pcover);
       case 'distance':
         return cmpNullableDirected(a.distance, b.distance, dir);
+      case 'drawdown':
+        return cmpNullableDirected(a.drawdownPct, b.drawdownPct, dir);
       case 'conviction':
         return dir * (a.convictionRank - b.convictionRank);
       case 'updated': {
@@ -207,6 +276,22 @@
     if (v === null || !Number.isFinite(v)) return '—';
     const sign = v >= 0 ? '+' : '−';
     return `${sign}$${Math.abs(v).toFixed(2)}`;
+  }
+
+  /**
+   * Format a drawdown percent as e.g. "−22.4%". Always renders the
+   * unicode minus (matches `fmtPct` and `fmtDistance`); a value of 0 or
+   * a tiny positive due to FP noise renders as "0.0%" without a sign.
+   */
+  function fmtDrawdownPct(v: number | null): string {
+    if (v === null || !Number.isFinite(v)) return '—';
+    if (v >= 0) return '0.0%';
+    return `−${Math.abs(v).toFixed(1)}%`;
+  }
+
+  function fmtDaysSinceHigh(v: number | null): string {
+    if (v === null || !Number.isFinite(v)) return '';
+    return v === 0 ? 'at high' : `${v}d`;
   }
 
   function fmtRelative(d: Date | null): string {
@@ -266,6 +351,10 @@
             <th onclick={() => toggleSort('dayChange')}>Day Change{sortIndicator('dayChange')}</th>
             <th onclick={() => toggleSort('pcover')}>Pcover{sortIndicator('pcover')}</th>
             <th onclick={() => toggleSort('distance')}>Distance{sortIndicator('distance')}</th>
+            <th
+              onclick={() => toggleSort('drawdown')}
+              title="Current % off the rolling 252-trading-day (≈52-week) high"
+            >Drawdown{sortIndicator('drawdown')}</th>
             <th onclick={() => toggleSort('conviction')}>Conviction{sortIndicator('conviction')}</th>
             <th onclick={() => toggleSort('updated')}>Last Updated{sortIndicator('updated')}</th>
           </tr>
@@ -294,6 +383,20 @@
                   <span class="cushion-tag">
                     {row.distance >= 0 ? 'cushion' : 'underwater'}
                   </span>
+                {:else}
+                  —
+                {/if}
+              </td>
+              <td
+                class="mono drawdown"
+                data-tone={row.drawdownTone}
+                title={row.drawdownPct !== null
+                  ? `52w high $${(drawdowns[row.pos.ticker]?.rolling52wHigh ?? 0).toFixed(2)} — ${row.daysSinceHigh}d ago`
+                  : ''}
+              >
+                {#if row.drawdownPct !== null}
+                  {fmtDrawdownPct(row.drawdownPct)}
+                  <span class="dd-days">{fmtDaysSinceHigh(row.daysSinceHigh)}</span>
                 {:else}
                   —
                 {/if}
@@ -467,6 +570,27 @@
   }
   .distance[data-tone='muted'] {
     color: var(--muted);
+  }
+
+  .drawdown[data-tone='good'] {
+    color: var(--bull);
+  }
+  .drawdown[data-tone='warn'] {
+    color: var(--warn);
+  }
+  .drawdown[data-tone='bad'] {
+    color: var(--bear);
+  }
+  .drawdown[data-tone='muted'] {
+    color: var(--text-secondary);
+  }
+
+  .dd-days {
+    color: var(--muted);
+    font-size: 11px;
+    margin-left: 4px;
+    font-family: var(--sans);
+    letter-spacing: 0;
   }
 
   .cushion-tag {

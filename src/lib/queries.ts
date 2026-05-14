@@ -492,3 +492,86 @@ export async function getEarnings(
 // directly via its own query path — and was removed to keep this module
 // to "what the UI actually calls". The view itself is still maintained
 // by migrations (other call sites depend on it).
+
+export interface DrawdownRow {
+  ticker: string;
+  latestClose: number;
+  rolling52wHigh: number;
+  /** <= 0; e.g. -22.4 means the latest close is 22.4% off the 52-week high. */
+  drawdownPct: number;
+  /** 0 = at the high; counts trading bars since the high was set. */
+  daysSinceHigh: number;
+}
+
+/**
+ * Per-ticker drawdown from the rolling 252-trading-day high.
+ *
+ * Uses MAX(close) OVER (... 251 PRECEDING AND CURRENT ROW) so the
+ * window is exactly the trailing 252 bars (~52 weeks of trading days).
+ * If the ticker has fewer than 252 bars in the table, the window
+ * gracefully degrades to whatever's available — useful for newly-added
+ * positions without faking "no drawdown."
+ *
+ * `daysSinceHigh` is computed as the count of bars strictly between the
+ * most recent bar that achieved the rolling high and the latest bar
+ * (inclusive of the latest). 0 means the latest bar IS the high.
+ *
+ * Returns one row per ticker that has at least 1 bar; empty array if
+ * the ohlcv table is empty. No `asOf` parameter — drawdown reflects the
+ * latest persisted bar regardless of historical-view state. (If we ever
+ * want historical drawdown, add an asOf upper bound on the inner CTE.)
+ */
+export async function getDrawdowns(): Promise<DrawdownRow[]> {
+  const conn = await getConn();
+  const result = await conn.query(`
+    WITH ranked AS (
+      SELECT
+        ticker,
+        dt,
+        close,
+        MAX(close) OVER (
+          PARTITION BY ticker ORDER BY dt
+          ROWS BETWEEN 251 PRECEDING AND CURRENT ROW
+        ) AS rolling_high,
+        ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY dt DESC) AS rn
+      FROM ohlcv
+    ),
+    high_dates AS (
+      -- For each ticker, find the most recent date the rolling_high was
+      -- actually achieved within the trailing-252 window. We restrict to
+      -- the latest 252 bars per ticker (rn <= 252) so an ancient all-time
+      -- high doesn't get picked up after it has rolled out of the window.
+      SELECT
+        ticker,
+        MAX(dt) AS high_dt
+      FROM ranked
+      WHERE rn <= 252 AND close = rolling_high
+      GROUP BY ticker
+    )
+    SELECT
+      r.ticker,
+      r.close AS latest_close,
+      r.rolling_high,
+      100.0 * (r.close - r.rolling_high) / r.rolling_high AS drawdown_pct,
+      (
+        SELECT COUNT(*) FROM ohlcv o2
+        WHERE o2.ticker = r.ticker
+          AND o2.dt > h.high_dt
+          AND o2.dt <= r.dt
+      ) AS days_since_high
+    FROM ranked r
+    JOIN high_dates h ON h.ticker = r.ticker
+    WHERE r.rn = 1
+    ORDER BY r.ticker
+  `);
+  return result.toArray().map((row) => {
+    const r = row.toJSON() as Record<string, unknown>;
+    return {
+      ticker: String(r.ticker),
+      latestClose: toNum(r.latest_close),
+      rolling52wHigh: toNum(r.rolling_high),
+      drawdownPct: toNum(r.drawdown_pct),
+      daysSinceHigh: toNum(r.days_since_high),
+    };
+  });
+}
