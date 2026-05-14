@@ -5,6 +5,33 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+(intentionally empty — fill as work lands toward v0.2.0)
+
+## [0.1.0] - 2026-05-14
+
+First versioned release. The app is feature-complete for personal
+single-user equity monitoring with the tax-overhang exit framework.
+Deployed at https://finmarkets-monitor.pages.dev.
+
+### Highlights
+
+- Multi-position portfolio with per-ticker drill-in tabs
+- Per-position witness model (trend/volume/indicators) with conviction
+  scoring + Sunday weekly review markdown export
+- Cross-ticker SQL Screener (6 predefined queries) and Anomaly
+  detection (volume z-scores, price gaps, 50/200 SMA crossings)
+- Historical Backtest panel with conviction-over-time chart and
+  3 example backtest queries
+- Earnings event annotations on price chart + Recent Earnings widget
+- Historical "as-of" view (backtest mode) with date picker
+- DuckDB-WASM as the analytical engine: schema migrations, recursive
+  CTEs for Wilder's RSI / Appel's MACD, materialized indicator tables,
+  current_snapshot view, OPFS persistence
+- 269 tests including DuckDB-node integration tests that execute the
+  actual SQL strings (catches WITH RECURSIVE-class bugs at test time)
+- Lazy-loaded analytical panels (entry chunk under 100kB gzip)
+- Dual-licensed under Apache-2.0 OR MIT
+
 ### Tooling (knip — unused-export detection)
 
 - **Added `knip` (v6.13.1) as a devDependency** with a project-tuned
