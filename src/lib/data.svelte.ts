@@ -9,7 +9,7 @@
 // Uses Svelte 5 runes — file must end in `.svelte.ts`.
 
 import { settings } from './settings.svelte';
-import { ensureSchema, getConn } from './duckdb';
+import { ensureSchema, getConn, resetSchemaMemo } from './duckdb';
 import {
   fetchDailyOhlcv,
   fetchIntradayOhlcv,
@@ -443,41 +443,19 @@ export async function refreshState(tickerArg?: string): Promise<void> {
 
 export async function clearCache(): Promise<void> {
   const conn = await getConn();
+  // Drop the view first (depends on ohlcv), then the data tables, then the
+  // migrations meta table. Resetting `_meta` is what forces the migration
+  // path to rebuild everything from version 0 — without it, `runMigrations`
+  // would skip every step because `schema_version` still equals the latest.
+  await conn.query('DROP VIEW IF EXISTS current_snapshot');
   await conn.query('DROP TABLE IF EXISTS ohlcv');
   await conn.query('DROP TABLE IF EXISTS ohlcv_intraday');
   await conn.query('DROP TABLE IF EXISTS fetch_log');
-  await conn.query(`
-    CREATE TABLE IF NOT EXISTS ohlcv (
-      ticker VARCHAR NOT NULL,
-      dt DATE NOT NULL,
-      open DOUBLE NOT NULL,
-      high DOUBLE NOT NULL,
-      low DOUBLE NOT NULL,
-      close DOUBLE NOT NULL,
-      volume BIGINT,
-      PRIMARY KEY (ticker, dt)
-    );
-  `);
-  await conn.query(`
-    CREATE TABLE IF NOT EXISTS ohlcv_intraday (
-      ticker VARCHAR NOT NULL,
-      ts TIMESTAMP NOT NULL,
-      open DOUBLE NOT NULL,
-      high DOUBLE NOT NULL,
-      low DOUBLE NOT NULL,
-      close DOUBLE NOT NULL,
-      volume BIGINT,
-      PRIMARY KEY (ticker, ts)
-    );
-  `);
-  await conn.query(`
-    CREATE TABLE IF NOT EXISTS fetch_log (
-      ticker VARCHAR NOT NULL,
-      fetched_at TIMESTAMP NOT NULL,
-      rows_inserted INTEGER NOT NULL,
-      status VARCHAR NOT NULL
-    );
-  `);
+  await conn.query('DROP TABLE IF EXISTS _meta');
+  // The schemaPromise resolved during boot — reset it so the next call
+  // re-runs the migration sequence on the cleared database.
+  resetSchemaMemo();
+  await ensureSchema(conn);
   // Reset all per-ticker tracking — the tables are now empty.
   dataState.rowCount = {};
   dataState.lastFetchedByTicker = {};

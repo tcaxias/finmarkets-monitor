@@ -60,6 +60,36 @@ function toNullableNum(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+// Coerce a DuckDB DATE/TIMESTAMP cell to an ISO-8601 date string
+// ("YYYY-MM-DD"). Mirrors `formatDate` in data.svelte.ts; kept local
+// here so queries.ts has no dependency on the reactive data layer.
+//
+// DuckDB-WASM may surface DATE values as JS Date objects, ISO strings,
+// or epoch-day integers depending on driver internals — we accept all
+// three and emit `''` for anything we can't parse rather than throwing.
+function formatDateValue(v: unknown): string {
+  if (v == null) return '';
+  if (v instanceof Date) {
+    return Number.isFinite(v.getTime()) ? v.toISOString().slice(0, 10) : '';
+  }
+  if (typeof v === 'string') {
+    const trimmed = v.trim();
+    const parsed = new Date(trimmed);
+    if (!Number.isNaN(parsed.getTime())) return trimmed.slice(0, 10);
+    return '';
+  }
+  if (typeof v === 'number' || typeof v === 'bigint') {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return '';
+    // Heuristic: if the magnitude looks like ms-since-epoch keep as-is,
+    // otherwise treat it as days-since-epoch (DuckDB's DATE storage).
+    const ms = Math.abs(n) > 1_000_000 ? n : n * 86_400_000;
+    const d = new Date(ms);
+    return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
+  }
+  return '';
+}
+
 /**
  * Build the WHERE clause and matching parameter array for a daily-table
  * query that's filtered by ticker plus optional asOf upper bound and
@@ -294,4 +324,45 @@ export async function getIntradayVolumeBars(
   } finally {
     await stmt.close();
   }
+}
+
+export interface SnapshotRow {
+  ticker: string;
+  /** ISO-8601 date ("YYYY-MM-DD") of the most recent bar. */
+  latestDt: string;
+  latestClose: number;
+  /** Close from the bar immediately preceding `latestDt`, or null if
+   *  this ticker has only one bar (no day-over-day delta computable). */
+  prevClose: number | null;
+  latestVolume: number | null;
+  rowCount: number;
+}
+
+/**
+ * One row per ticker with the latest OHLCV plus prev_close. Backed by the
+ * `current_snapshot` view (migration v2). Lets PortfolioOverview render
+ * the table without N round trips — a single query returns everything
+ * the overview needs to compute day-over-day deltas.
+ *
+ * Currently unused by the UI; introduced as infrastructure for the
+ * upcoming Screener panel and a future PortfolioOverview migration.
+ */
+export async function getCurrentSnapshot(): Promise<SnapshotRow[]> {
+  const conn = await getConn();
+  const result = await conn.query(
+    `SELECT ticker, latest_dt, latest_close, prev_close, latest_volume, row_count
+     FROM current_snapshot
+     ORDER BY ticker`,
+  );
+  return result.toArray().map((row) => {
+    const r = row.toJSON() as Record<string, unknown>;
+    return {
+      ticker: String(r.ticker),
+      latestDt: formatDateValue(r.latest_dt),
+      latestClose: toNum(r.latest_close),
+      prevClose: r.prev_close == null ? null : toNum(r.prev_close),
+      latestVolume: toNullableNum(r.latest_volume),
+      rowCount: toNum(r.row_count),
+    };
+  });
 }

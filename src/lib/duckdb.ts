@@ -15,6 +15,7 @@ import * as duckdb from '@duckdb/duckdb-wasm';
 import mvp_worker from '@duckdb/duckdb-wasm/dist/duckdb-browser-mvp.worker.js?url';
 import eh_worker from '@duckdb/duckdb-wasm/dist/duckdb-browser-eh.worker.js?url';
 import { runtimeState } from './runtimeState.svelte';
+import { runMigrations } from './migrations';
 
 // Keep this version in sync with the installed @duckdb/duckdb-wasm in package.json.
 // If you bump the npm dependency, also bump this constant. Mismatch = subtle ABI bugs.
@@ -115,12 +116,17 @@ export async function getConn(): Promise<duckdb.AsyncDuckDBConnection> {
 }
 
 /**
- * Idempotent schema bootstrap. Safe to call repeatedly; CREATE TABLE IF NOT EXISTS
- * makes this cheap on subsequent loads when OPFS already has the tables.
+ * Idempotent schema bootstrap. Delegates to the migrations runner
+ * (`migrations.ts`), which applies any pending versioned migrations and
+ * records the result in the `_meta` table. Safe to call repeatedly; the
+ * promise is memoized so the migration loop only runs once per process.
  *
  * If a connection is passed in, we use it. Otherwise we open a temporary
  * connection and close it in a `finally` so we don't leak handles into the
  * DuckDB-WASM worker.
+ *
+ * Tests / `clearCache` may need to reset the memo after dropping tables —
+ * use `resetSchemaMemo()`.
  */
 export async function ensureSchema(
   conn?: duckdb.AsyncDuckDBConnection,
@@ -136,43 +142,7 @@ export async function ensureSchema(
       ownConnection = true;
     }
     try {
-      await c.query(`
-        CREATE TABLE IF NOT EXISTS ohlcv (
-          ticker VARCHAR NOT NULL,
-          dt DATE NOT NULL,
-          open DOUBLE NOT NULL,
-          high DOUBLE NOT NULL,
-          low DOUBLE NOT NULL,
-          close DOUBLE NOT NULL,
-          volume BIGINT,
-          PRIMARY KEY (ticker, dt)
-        );
-      `);
-      // Intraday bars (5-minute granularity by default). Kept in a
-      // separate table from `ohlcv` so the daily indicator math
-      // (SMA/RSI/MACD windows) doesn't accidentally mix bar sizes,
-      // and so a wipe-and-reload of intraday on each "1D" view doesn't
-      // touch the long-running daily history.
-      await c.query(`
-        CREATE TABLE IF NOT EXISTS ohlcv_intraday (
-          ticker VARCHAR NOT NULL,
-          ts TIMESTAMP NOT NULL,
-          open DOUBLE NOT NULL,
-          high DOUBLE NOT NULL,
-          low DOUBLE NOT NULL,
-          close DOUBLE NOT NULL,
-          volume BIGINT,
-          PRIMARY KEY (ticker, ts)
-        );
-      `);
-      await c.query(`
-        CREATE TABLE IF NOT EXISTS fetch_log (
-          ticker VARCHAR NOT NULL,
-          fetched_at TIMESTAMP NOT NULL,
-          rows_inserted INTEGER NOT NULL,
-          status VARCHAR NOT NULL
-        );
-      `);
+      await runMigrations(c);
     } finally {
       if (ownConnection) {
         await c.close().catch((err) => {
@@ -182,6 +152,18 @@ export async function ensureSchema(
     }
   })();
   return schemaPromise;
+}
+
+/**
+ * Clear the memoized `ensureSchema` promise. Call this *after* dropping
+ * schema-bearing tables (notably `_meta`) so the next `ensureSchema()` call
+ * re-runs migrations from scratch instead of returning the resolved-no-op
+ * promise from the prior bootstrap.
+ *
+ * Only `clearCache` (and tests) should need this.
+ */
+export function resetSchemaMemo(): void {
+  schemaPromise = null;
 }
 
 export async function query<T = Record<string, unknown>>(sql: string): Promise<T[]> {

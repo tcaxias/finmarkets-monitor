@@ -7,6 +7,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Schema migrations infrastructure** — new `src/lib/migrations.ts`
+  with versioned, append-only migrations recorded in a `_meta` table.
+  `ensureSchema()` now delegates to `runMigrations()` instead of
+  inlining DDL. Each migration runs in its own transaction so a
+  failure in v(N) leaves the database recoverable at v(N-1).
+  Migration v1 captures the existing baseline (idempotent
+  `CREATE TABLE IF NOT EXISTS` for `ohlcv`, `ohlcv_intraday`,
+  `fetch_log`); existing OPFS databases upgrade transparently.
+- **`current_snapshot` view** (migration v2) — one row per ticker with
+  latest OHLC, prev_close, latest_volume, and row_count, joined in
+  SQL. New `getCurrentSnapshot()` query helper exposes it as
+  `SnapshotRow[]`. Infrastructure for the upcoming Screener panel and
+  a future PortfolioOverview migration; not yet wired into the UI.
 - **Chart toolbar** — eight timeframe buttons (1D, 1M, 3M, 6M, YTD, 1Y,
   2Y, All) plus eight series toggles (SMA20, SMA50, SMA200, Volume,
   Pcover lines, Vest line, RSI pane, MACD pane). State persists to
