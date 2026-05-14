@@ -21,15 +21,18 @@
   import PositionsPanel from './components/PositionsPanel.svelte';
   import DataPanel from './components/DataPanel.svelte';
   import WitnessPanel from './components/WitnessPanel.svelte';
+  import ChartToolbar from './components/ChartToolbar.svelte';
   import ChartPanel from './components/ChartPanel.svelte';
   import RsiPanel from './components/RsiPanel.svelte';
   import MacdPanel from './components/MacdPanel.svelte';
+  import IndicatorsAbout from './components/IndicatorsAbout.svelte';
   import ReviewExport from './components/ReviewExport.svelte';
   import { getDb, getVersion } from './lib/duckdb';
   import { refreshState, dataState } from './lib/data.svelte';
   import { settings, getActivePosition } from './lib/settings.svelte';
   import { ensureSlice, getEval, recomputeAll, recomputeOne } from './lib/evaluation.svelte';
   import { viewState, setAsOfDate, daysAgo } from './lib/viewState.svelte';
+  import { chartPrefs } from './lib/chartPrefs.svelte';
 
   let dbStatus = $state<'loading' | 'ready' | 'error'>('loading');
   let dbVersion = $state<string>('');
@@ -104,6 +107,16 @@
   $effect(() => {
     const _asOf = viewState.asOfDate;
     void _asOf;
+    if (dbStatus === 'ready') {
+      void recomputeAll();
+    }
+  });
+
+  // Timeframe change → every slice is windowed differently (or, for
+  // '1D', sourced from a different table entirely). Same fan-out as
+  // the asOf effect.
+  $effect(() => {
+    void chartPrefs.timeframe;
     if (dbStatus === 'ready') {
       void recomputeAll();
     }
@@ -205,12 +218,14 @@
       </section>
 
       <section class="container wide stack" id="chart">
+        <ChartToolbar />
         <ChartPanel />
       </section>
 
       <section class="container wide stack" id="indicators">
-        <RsiPanel />
-        <MacdPanel />
+        {#if chartPrefs.showRsiPane}<RsiPanel />{/if}
+        {#if chartPrefs.showMacdPane}<MacdPanel />{/if}
+        <IndicatorsAbout />
       </section>
 
       <section class="container narrow stack" id="review">

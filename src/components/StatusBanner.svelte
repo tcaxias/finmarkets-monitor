@@ -147,13 +147,12 @@
     </span>
   {:else if !hasData}
     <span class="ticker-pill">{ticker}</span>
-    <TickerLinks {ticker} size="md" />
     <span class="muted-msg">
       Awaiting data — refresh in the Data panel below.
     </span>
+    <span class="links-slot"><TickerLinks {ticker} size="md" /></span>
   {:else if slice}
     <span class="ticker-pill">{ticker}</span>
-    <TickerLinks {ticker} size="md" />
 
     <span class="price">{fmtPrice(slice.latestClose)}</span>
 
@@ -200,6 +199,8 @@
         {shortConvictionLabel(slice.summary?.conviction ?? null)}
       </span>
     </span>
+
+    <span class="links-slot"><TickerLinks {ticker} size="md" /></span>
   {/if}
 </section>
 
@@ -346,5 +347,14 @@
   .dot-neutral {
     background: var(--neutral);
     box-shadow: 0 0 0 2px rgba(107, 114, 128, 0.2);
+  }
+
+  /* Push the external-links pill row all the way to the right so the
+     metrics/conviction block stays left-aligned. `flex-wrap` on the
+     parent means this falls below the metrics on narrow widths instead
+     of overlapping — the auto margin only "wins" when there's free
+     space on the row. */
+  .links-slot {
+    margin-left: auto;
   }
 </style>

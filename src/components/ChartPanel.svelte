@@ -3,9 +3,18 @@
   // with imported series definition constants instead of v4's shorthand
   // methods.
   //
-  // Phase A multi-ticker rewrite: reads from `getEval(activeTicker)` and
-  // computes thresholds from the active position's vest data. Renders a
-  // placeholder when no position is active.
+  // Series lifecycle:
+  //   - Candles are always present.
+  //   - SMA20 / SMA50 / SMA200 / Volume are CREATED on the fly when
+  //     their toggle flips on, REMOVED when it flips off. The chart
+  //     instance survives across these add/remove cycles; only the
+  //     series API handles are recycled.
+  //   - Pcover / Pcover+20% / Vest are PriceLines on the candle series
+  //     (not series themselves), so they're cheap to recreate every
+  //     time their toggle changes.
+  //
+  // For the intraday view (timeframe='1D') we enable `timeVisible: true`
+  // on the time scale so HH:MM is rendered alongside the date.
   import {
     createChart,
     CandlestickSeries,
@@ -25,11 +34,13 @@
   import { settings, getActivePosition } from '../lib/settings.svelte';
   import { computeThresholds, type Thresholds } from '../lib/math';
   import { getEval } from '../lib/evaluation.svelte';
+  import { chartPrefs } from '../lib/chartPrefs.svelte';
 
   let chartContainer: HTMLDivElement | undefined = $state();
   let chart: IChartApi | undefined;
   let candleSeries: ISeriesApi<'Candlestick'> | undefined;
   let sma20Series: ISeriesApi<'Line'> | undefined;
+  let sma50Series: ISeriesApi<'Line'> | undefined;
   let sma200Series: ISeriesApi<'Line'> | undefined;
   let volumeSeries: ISeriesApi<'Histogram'> | undefined;
   let priceLines: IPriceLine[] = [];
@@ -44,9 +55,6 @@
     return getActivePosition();
   });
 
-  // App.svelte's positions $effect ensures the slice exists before this
-  // runs — getEval is a pure read and Svelte tracks the slice properties
-  // we read in downstream $effects/derived.
   const slice = $derived(activePosition ? getEval(activePosition.ticker) : null);
 
   const COLORS = {
@@ -57,6 +65,7 @@
     upWick: '#26a69a',
     downWick: '#ef5350',
     sma20: '#f5d76e',
+    sma50: '#60a5fa',
     sma200: '#ef5350',
     pcover: '#ef5350',
     pcoverPlus: '#f59e0b',
@@ -88,7 +97,15 @@
       wickUpColor: COLORS.upWick,
       wickDownColor: COLORS.downWick,
     });
+  }
 
+  // ----- Series creation helpers -----
+  // Each "ensure" function adds the series if absent; each "drop"
+  // function removes it if present. Idempotent so the $effect that
+  // syncs prefs → chart can call them on every change without checking.
+
+  function ensureSma20(): void {
+    if (!chart || sma20Series) return;
     sma20Series = chart.addSeries(LineSeries, {
       color: COLORS.sma20,
       lineWidth: 2,
@@ -96,7 +113,33 @@
       priceLineVisible: false,
       lastValueVisible: false,
     });
+  }
+  function dropSma20(): void {
+    if (chart && sma20Series) {
+      chart.removeSeries(sma20Series);
+      sma20Series = undefined;
+    }
+  }
 
+  function ensureSma50(): void {
+    if (!chart || sma50Series) return;
+    sma50Series = chart.addSeries(LineSeries, {
+      color: COLORS.sma50,
+      lineWidth: 2,
+      lineStyle: LineStyle.Solid,
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+  }
+  function dropSma50(): void {
+    if (chart && sma50Series) {
+      chart.removeSeries(sma50Series);
+      sma50Series = undefined;
+    }
+  }
+
+  function ensureSma200(): void {
+    if (!chart || sma200Series) return;
     sma200Series = chart.addSeries(LineSeries, {
       color: COLORS.sma200,
       lineWidth: 2,
@@ -104,7 +147,16 @@
       priceLineVisible: false,
       lastValueVisible: false,
     });
+  }
+  function dropSma200(): void {
+    if (chart && sma200Series) {
+      chart.removeSeries(sma200Series);
+      sma200Series = undefined;
+    }
+  }
 
+  function ensureVolume(): void {
+    if (!chart || volumeSeries) return;
     volumeSeries = chart.addSeries(HistogramSeries, {
       priceFormat: { type: 'volume' },
       priceScaleId: '',
@@ -115,42 +167,69 @@
       scaleMargins: { top: 0.7, bottom: 0 },
     });
   }
+  function dropVolume(): void {
+    if (chart && volumeSeries) {
+      chart.removeSeries(volumeSeries);
+      volumeSeries = undefined;
+    }
+  }
 
-  /** Render the chart from the active position's slice of the eval cache. */
+  /**
+   * Render the chart from the active position's slice of the eval cache.
+   * Each series is fed only when it exists (the prefs effect ensures
+   * presence) — passing data to a non-existent series is a silent no-op
+   * here and avoids the "TypeError: cannot read properties of undefined"
+   * we'd otherwise hit if a prefs flip raced ahead of the render.
+   */
   function renderFromCache(): void {
-    if (!chart || !candleSeries || !sma20Series || !sma200Series || !volumeSeries) {
+    if (!chart || !candleSeries) {
       return;
     }
 
     if (!slice || slice.candles.length === 0) {
       hasData = false;
       candleSeries.setData([]);
-      sma20Series.setData([]);
-      sma200Series.setData([]);
-      volumeSeries.setData([]);
+      sma20Series?.setData([]);
+      sma50Series?.setData([]);
+      sma200Series?.setData([]);
+      volumeSeries?.setData([]);
       return;
     }
 
     const candles = slice.candles;
-    const sma20 = slice.sma20;
-    const sma200 = slice.sma200;
-    const vol = slice.volume;
-
     loadError = null;
     candleSeries.setData(
       candles.map((c) => ({ ...c, time: c.time as UTCTimestamp })) as CandlestickData[],
     );
-    sma20Series.setData(
-      sma20.map((p) => ({ ...p, time: p.time as UTCTimestamp })) as LineData[],
-    );
-    sma200Series.setData(
-      sma200.map((p) => ({ ...p, time: p.time as UTCTimestamp })) as LineData[],
-    );
-    volumeSeries.setData(
-      vol
-        .filter((v): v is { time: number; value: number; color: string } => v.value !== null)
-        .map((v) => ({ ...v, time: v.time as UTCTimestamp })) as HistogramData[],
-    );
+    if (sma20Series) {
+      sma20Series.setData(
+        slice.sma20.map((p) => ({ ...p, time: p.time as UTCTimestamp })) as LineData[],
+      );
+    }
+    if (sma50Series) {
+      sma50Series.setData(
+        slice.sma50.map((p) => ({ ...p, time: p.time as UTCTimestamp })) as LineData[],
+      );
+    }
+    if (sma200Series) {
+      sma200Series.setData(
+        slice.sma200.map((p) => ({ ...p, time: p.time as UTCTimestamp })) as LineData[],
+      );
+    }
+    if (volumeSeries) {
+      volumeSeries.setData(
+        slice.volume
+          .filter((v): v is { time: number; value: number; color: string } => v.value !== null)
+          .map((v) => ({ ...v, time: v.time as UTCTimestamp })) as HistogramData[],
+      );
+    }
+
+    // Toggle the time-scale's HH:MM visibility based on bar size — only
+    // intraday slices need it. Doing it here (after data is set) keeps
+    // the rendering reactively in sync with the slice's `isIntraday`.
+    chart.applyOptions({
+      timeScale: { borderColor: COLORS.border, timeVisible: slice.isIntraday },
+    });
 
     hasData = true;
     chart.timeScale().fitContent();
@@ -170,33 +249,74 @@
     if (!Number.isFinite(thresholds.pbreakeven) || thresholds.pbreakeven <= 0) {
       return;
     }
-    priceLines.push(
-      candleSeries.createPriceLine({
-        price: thresholds.pcover,
-        color: COLORS.pcover,
-        lineWidth: 1,
-        lineStyle: LineStyle.Dashed,
-        axisLabelVisible: true,
-        title: 'Pcover',
-      }),
-      candleSeries.createPriceLine({
-        price: thresholds.pcoverPlus20,
-        color: COLORS.pcoverPlus,
-        lineWidth: 1,
-        lineStyle: LineStyle.Dashed,
-        axisLabelVisible: true,
-        title: 'Pcover+20%',
-      }),
-      candleSeries.createPriceLine({
-        price: thresholds.pbreakeven,
-        color: COLORS.breakeven,
-        lineWidth: 1,
-        lineStyle: LineStyle.Dashed,
-        axisLabelVisible: true,
-        title: 'Vest',
-      }),
-    );
+    if (chartPrefs.showPcoverLines) {
+      priceLines.push(
+        candleSeries.createPriceLine({
+          price: thresholds.pcover,
+          color: COLORS.pcover,
+          lineWidth: 1,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: 'Pcover',
+        }),
+        candleSeries.createPriceLine({
+          price: thresholds.pcoverPlus20,
+          color: COLORS.pcoverPlus,
+          lineWidth: 1,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: 'Pcover+20%',
+        }),
+      );
+    }
+    if (chartPrefs.showVestLine) {
+      priceLines.push(
+        candleSeries.createPriceLine({
+          price: thresholds.pbreakeven,
+          color: COLORS.breakeven,
+          lineWidth: 1,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: 'Vest',
+        }),
+      );
+    }
   }
+
+  // Sync chart series presence with chartPrefs. This $effect runs on
+  // any prefs flip; the ensure/drop helpers are idempotent, and we
+  // call renderFromCache() at the end so newly-added series get their
+  // data immediately (otherwise they'd render empty until the next
+  // recompute generation tick).
+  //
+  // Intraday: SMA series are dropped regardless of toggle state because
+  // slice.smaXX arrays are empty in intraday mode anyway, and rendering
+  // them would just clutter the chart with empty series.
+  $effect(() => {
+    if (!chart) return;
+
+    const isIntraday = slice?.isIntraday ?? false;
+
+    // Touch every prefs field we read so Svelte tracks the dependency.
+    void chartPrefs.showSma20;
+    void chartPrefs.showSma50;
+    void chartPrefs.showSma200;
+    void chartPrefs.showVolume;
+
+    if (chartPrefs.showSma20 && !isIntraday) ensureSma20();
+    else dropSma20();
+
+    if (chartPrefs.showSma50 && !isIntraday) ensureSma50();
+    else dropSma50();
+
+    if (chartPrefs.showSma200 && !isIntraday) ensureSma200();
+    else dropSma200();
+
+    if (chartPrefs.showVolume) ensureVolume();
+    else dropVolume();
+
+    renderFromCache();
+  });
 
   $effect(() => {
     if (!chartContainer) return;
@@ -209,6 +329,12 @@
       }
     });
     resizeObserver.observe(chartContainer);
+
+    // Initial series setup honours current prefs.
+    if (chartPrefs.showSma20) ensureSma20();
+    if (chartPrefs.showSma50) ensureSma50();
+    if (chartPrefs.showSma200) ensureSma200();
+    if (chartPrefs.showVolume) ensureVolume();
 
     renderFromCache();
     if (activePosition) {
@@ -223,11 +349,16 @@
     return () => {
       resizeObserver?.disconnect();
       resizeObserver = undefined;
+      // Lightweight Charts cleans up child series automatically when
+      // the chart is removed; we don't need to call dropX() here, but
+      // we DO need to null out our handles so a stale ref from a
+      // previous mount doesn't get reused.
       clearPriceLines();
       chart?.remove();
       chart = undefined;
       candleSeries = undefined;
       sma20Series = undefined;
+      sma50Series = undefined;
       sma200Series = undefined;
       volumeSeries = undefined;
     };
@@ -246,9 +377,15 @@
   });
 
   // Recompute price lines whenever any threshold input changes on the
-  // active position.
+  // active position OR the user toggles Pcover/Vest visibility.
   $effect(() => {
-    if (!activePosition) return;
+    void chartPrefs.showPcoverLines;
+    void chartPrefs.showVestLine;
+    if (!activePosition) {
+      // Still clear any leftover lines from a previous active position.
+      if (chart && candleSeries) clearPriceLines();
+      return;
+    }
     const t = computeThresholds(
       activePosition.vestPrice,
       activePosition.shares,
@@ -277,7 +414,11 @@
 
       {#if !hasData}
         <div class="placeholder">
-          No data — click <strong>Refresh data</strong> to fetch.
+          {#if slice?.isIntraday}
+            No intraday data — click <strong>Refresh intraday</strong> on the toolbar.
+          {:else}
+            No data — click <strong>Refresh data</strong> to fetch.
+          {/if}
         </div>
       {/if}
     </div>

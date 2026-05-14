@@ -5,6 +5,52 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Chart toolbar** — eight timeframe buttons (1D, 1M, 3M, 6M, YTD, 1Y,
+  2Y, All) plus eight series toggles (SMA20, SMA50, SMA200, Volume,
+  Pcover lines, Vest line, RSI pane, MACD pane). State persists to
+  localStorage under `finmarkets-monitor:chartPrefs`.
+- **Intraday (1D) view** — new `ohlcv_intraday` table, dedicated 5-min
+  fetch path against Twelve Data, and a "Refresh intraday" button on
+  the toolbar when the 1D timeframe is active. Indicator math is
+  skipped for intraday (RSI/MACD/SMAs are daily-only concepts) and
+  the chart's time scale renders HH:MM granularity.
+- **Timeframe windowing** — daily queries now accept a `since` filter
+  computed from the active timeframe so each pull only retrieves the
+  visible slice. SMA window math reaches into pre-`since` history for
+  warmup so the leading edge of the visible average is mathematically
+  correct, not a partial-window artefact.
+- **SMA(50) series** — additional medium-term moving average drawn
+  alongside SMA(20) and SMA(200) when its toggle is on (default: off).
+- **`IndicatorsAbout` collapsible panel** — definition list of every
+  toggleable concept (candles, volume, SMAs, RSI, MACD, Pcover, Vest)
+  with a 2-3 sentence financial explanation. Same descriptions are
+  surfaced as `title` tooltips on the toolbar buttons.
+- **Tests** — `chartPrefs.test.ts` covers defaults, persistence,
+  rehydration, malformed-storage fallback, unknown-key tolerance, and
+  the `timeframeSince` date math; `twelvedata.test.ts` locks down the
+  `buildTimeSeriesUrl` parameter wiring across daily and intraday
+  intervals.
+
+### Changed
+
+- **`TickerLinks`** — replaced the `<details>` dropdown with an
+  always-visible inline horizontal pill row. Used in `StatusBanner`
+  only (right-aligned via `margin-left: auto`); removed from
+  `PortfolioOverview` rows where the per-row links crowded the dense
+  table.
+- **`fetchDailyOhlcv` → `fetchOhlcv`** — generalised to take an
+  `interval` parameter; the legacy `fetchDailyOhlcv` is preserved as a
+  thin wrapper for backward compatibility. New `fetchIntradayOhlcv`
+  returns `IntradayRow[]` with a `ts` field (vs daily's `dt`) so
+  callers can route to the right table without ambiguity.
+- **`evaluation.svelte.ts`** — `flightKey` now includes the active
+  timeframe so a timeframe switch mid-flight schedules a fresh run
+  instead of returning the prior in-flight slice. `PerTickerEval`
+  carries `timeframe` and `isIntraday` so consumers can detect the
+  cache state without re-reading prefs.
+
 ### Fixed (Phase A/B review findings)
 
 - **`recomputeOne` asOfDate race** — in-flight dedupe was keyed only by

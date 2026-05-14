@@ -10,7 +10,13 @@
 
 import { settings } from './settings.svelte';
 import { ensureSchema, getConn } from './duckdb';
-import { fetchDailyOhlcv, TwelveDataError, type OhlcvRow } from './twelvedata';
+import {
+  fetchDailyOhlcv,
+  fetchIntradayOhlcv,
+  TwelveDataError,
+  type OhlcvRow,
+  type IntradayRow,
+} from './twelvedata';
 
 export interface DataState {
   loading: boolean;
@@ -26,6 +32,12 @@ export interface DataState {
   error: string | null;
   /** Progress for multi-position refresh; null when idle or single-ticker. */
   refreshProgress: { current: number; total: number; ticker: string } | null;
+  /** Per-ticker latest intraday refresh timestamp (separate from daily). */
+  intradayLastFetched: Record<string, Date | null>;
+  /** Per-ticker intraday row count (today's bars). */
+  intradayRowCount: Record<string, number>;
+  /** Set while an intraday refresh is in flight (independent of `loading`). */
+  intradayLoading: boolean;
 }
 
 export const dataState = $state<DataState>({
@@ -37,6 +49,9 @@ export const dataState = $state<DataState>({
   latestDateByTicker: {},
   error: null,
   refreshProgress: null,
+  intradayLastFetched: {},
+  intradayRowCount: {},
+  intradayLoading: false,
 });
 
 // Debounce: prevent runaway clicks against an 8-req/min free tier.
@@ -158,6 +173,149 @@ export async function refreshAll(): Promise<void> {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Refresh today's intraday (5-minute) bars for one ticker.
+ *
+ * Independent of the daily-refresh cooldown — intraday is its own
+ * call budget against the same Twelve Data quota, and the user
+ * triggers it explicitly from the chart toolbar's "1D" view. We do
+ * still respect `dataState.intradayLoading` to prevent double-clicks
+ * from issuing two requests.
+ *
+ * Logs to fetch_log with status `'ok-intraday'` (or `'error-intraday'`)
+ * so the audit log can distinguish the two refresh paths without
+ * reverse-engineering the call site.
+ */
+export async function refreshIntradayData(tickerArg?: string): Promise<boolean> {
+  if (dataState.intradayLoading) return false;
+
+  const ticker = (tickerArg ?? '').trim().toUpperCase();
+  const apiKey = settings.apiKey.trim();
+
+  if (!apiKey) {
+    dataState.error = 'API key is required. Add one in Settings.';
+    return false;
+  }
+  if (!ticker) {
+    dataState.error = 'Ticker is required.';
+    return false;
+  }
+
+  dataState.intradayLoading = true;
+  dataState.error = null;
+
+  let rowsInserted = 0;
+  let status = 'ok-intraday';
+  let ok = false;
+
+  try {
+    // 78 bars ≈ one US trading session (6.5h × 12 bars/h) at 5min.
+    const { rows } = await fetchIntradayOhlcv(ticker, apiKey, '5min', 78);
+    rowsInserted = await insertIntradayRows(ticker, rows);
+    try {
+      await logFetch(ticker, rowsInserted, status);
+    } catch (logErr) {
+      console.warn('Failed to write fetch_log (non-fatal):', logErr);
+    }
+    await refreshIntradayState(ticker);
+    ok = true;
+  } catch (err) {
+    status = 'error-intraday';
+    if (err instanceof TwelveDataError) {
+      dataState.error = `Twelve Data ${err.code ? `(${err.code}) ` : ''}${err.message}`;
+    } else {
+      dataState.error = err instanceof Error ? err.message : String(err);
+    }
+    try {
+      await logFetch(ticker, 0, status);
+    } catch (logErr) {
+      console.warn('fetch_log insert failed', logErr);
+    }
+  } finally {
+    dataState.intradayLoading = false;
+  }
+  return ok;
+}
+
+async function insertIntradayRows(ticker: string, rows: IntradayRow[]): Promise<number> {
+  if (rows.length === 0) return 0;
+  await ensureSchema();
+  const conn = await getConn();
+
+  await conn.query('BEGIN TRANSACTION');
+  try {
+    const stmt = await conn.prepare(
+      `INSERT OR REPLACE INTO ohlcv_intraday (ticker, ts, open, high, low, close, volume)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    );
+    try {
+      for (const r of rows) {
+        await stmt.query(
+          ticker,
+          r.ts,
+          r.open,
+          r.high,
+          r.low,
+          r.close,
+          r.volume,
+        );
+      }
+    } finally {
+      await stmt.close();
+    }
+    await conn.query('COMMIT');
+  } catch (err) {
+    await conn.query('ROLLBACK').catch(() => {});
+    throw err;
+  }
+
+  return rows.length;
+}
+
+/**
+ * Refresh `dataState.intraday*` fields for one ticker by re-querying
+ * today's intraday row count and the latest fetch timestamp.
+ */
+export async function refreshIntradayState(tickerArg?: string): Promise<void> {
+  await ensureSchema();
+  const conn = await getConn();
+  const tickers = tickerArg
+    ? [tickerArg.trim().toUpperCase()].filter(Boolean)
+    : settings.positions.map((p) => p.ticker.trim().toUpperCase()).filter(Boolean);
+
+  for (const ticker of tickers) {
+    const stmt = await conn.prepare(
+      `SELECT COUNT(*)::INTEGER AS row_count
+       FROM ohlcv_intraday
+       WHERE ticker = ? AND date(ts) = CURRENT_DATE`,
+    );
+    try {
+      const tbl = await stmt.query(ticker);
+      const r = tbl.toArray().map((row) => ({ ...row.toJSON() }))[0] as
+        | { row_count: number }
+        | undefined;
+      dataState.intradayRowCount[ticker] = Number(r?.row_count ?? 0);
+    } finally {
+      await stmt.close();
+    }
+
+    const logStmt = await conn.prepare(
+      `SELECT fetched_at FROM fetch_log
+       WHERE ticker = ? AND status = 'ok-intraday'
+       ORDER BY fetched_at DESC LIMIT 1`,
+    );
+    try {
+      const tbl = await logStmt.query(ticker);
+      const r = tbl.toArray().map((row) => ({ ...row.toJSON() }))[0] as
+        | { fetched_at: unknown }
+        | undefined;
+      dataState.intradayLastFetched[ticker] = r ? toDate(r.fetched_at) : null;
+    } finally {
+      await logStmt.close();
+    }
+  }
 }
 
 /**
@@ -286,6 +444,7 @@ export async function refreshState(tickerArg?: string): Promise<void> {
 export async function clearCache(): Promise<void> {
   const conn = await getConn();
   await conn.query('DROP TABLE IF EXISTS ohlcv');
+  await conn.query('DROP TABLE IF EXISTS ohlcv_intraday');
   await conn.query('DROP TABLE IF EXISTS fetch_log');
   await conn.query(`
     CREATE TABLE IF NOT EXISTS ohlcv (
@@ -297,6 +456,18 @@ export async function clearCache(): Promise<void> {
       close DOUBLE NOT NULL,
       volume BIGINT,
       PRIMARY KEY (ticker, dt)
+    );
+  `);
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS ohlcv_intraday (
+      ticker VARCHAR NOT NULL,
+      ts TIMESTAMP NOT NULL,
+      open DOUBLE NOT NULL,
+      high DOUBLE NOT NULL,
+      low DOUBLE NOT NULL,
+      close DOUBLE NOT NULL,
+      volume BIGINT,
+      PRIMARY KEY (ticker, ts)
     );
   `);
   await conn.query(`
@@ -312,6 +483,8 @@ export async function clearCache(): Promise<void> {
   dataState.lastFetchedByTicker = {};
   dataState.latestCloseByTicker = {};
   dataState.latestDateByTicker = {};
+  dataState.intradayRowCount = {};
+  dataState.intradayLastFetched = {};
   dataState.lastFetched = null;
   await refreshState();
 }

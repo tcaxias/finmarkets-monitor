@@ -43,26 +43,41 @@ function toNum(v: unknown): number {
 /**
  * Pull (time, close) pairs for `ticker` ordered by date. Shared input for
  * both RSI and MACD so we don't double-query.
+ *
+ * `asOf` clamps the upper bound; `since` clamps the lower bound. Note
+ * that for RSI/MACD the indicator math NEEDS warmup history — callers
+ * that pass `since` are accepting that the indicator output will start
+ * later than `since` (the warmup eats the first ~15-35 bars). For an
+ * "indicator that begins exactly at `since`" you'd need to fetch with
+ * a wider window and clip post-compute. We don't do that here because
+ * timeframe filters in this app run against a chart that only renders
+ * the requested range — a missing leading slice is the desired UX.
  */
 export async function getCloses(
   ticker: string,
   asOf?: string | null,
+  since?: string | null,
 ): Promise<ClosePoint[]> {
   const conn = await getConn();
   // See queries.ts for the rationale on CAST(? AS DATE) — same DuckDB
   // bind-type quirk applies here.
-  const sql = asOf
-    ? `SELECT epoch(dt)::BIGINT AS time, close
+  let clause = `WHERE ticker = ?`;
+  const params: unknown[] = [ticker];
+  if (since) {
+    clause += ` AND dt >= CAST(? AS DATE)`;
+    params.push(since);
+  }
+  if (asOf) {
+    clause += ` AND dt <= CAST(? AS DATE)`;
+    params.push(asOf);
+  }
+  const sql = `SELECT epoch(dt)::BIGINT AS time, close
        FROM ohlcv
-       WHERE ticker = ? AND dt <= CAST(? AS DATE)
-       ORDER BY dt`
-    : `SELECT epoch(dt)::BIGINT AS time, close
-       FROM ohlcv
-       WHERE ticker = ?
+       ${clause}
        ORDER BY dt`;
   const stmt = await conn.prepare(sql);
   try {
-    const tbl = asOf ? await stmt.query(ticker, asOf) : await stmt.query(ticker);
+    const tbl = await stmt.query(...params);
     return tbl.toArray().map((row) => {
       const r = row.toJSON() as Record<string, unknown>;
       return { time: toNum(r.time), close: toNum(r.close) };
@@ -97,8 +112,9 @@ export async function getRsi(
   ticker: string,
   period = 14,
   asOf?: string | null,
+  since?: string | null,
 ): Promise<RsiPoint[]> {
-  const closes = await getCloses(ticker, asOf);
+  const closes = await getCloses(ticker, asOf, since);
   return computeRsi(closes, period);
 }
 
@@ -151,8 +167,9 @@ export async function getMacd(
   slow = 26,
   signal = 9,
   asOf?: string | null,
+  since?: string | null,
 ): Promise<MacdPoint[]> {
-  const closes = await getCloses(ticker, asOf);
+  const closes = await getCloses(ticker, asOf, since);
   return computeMacd(closes, fast, slow, signal);
 }
 

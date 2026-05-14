@@ -11,7 +11,9 @@
   import { dataState } from '../lib/data.svelte';
   import { viewState } from '../lib/viewState.svelte';
   import { computeThresholds } from '../lib/math';
-  import TickerLinks from './TickerLinks.svelte';
+  // TickerLinks intentionally NOT imported here — the per-row external
+  // links crowded the dense overview table. Kept available in
+  // StatusBanner only for now.
 
   type SortKey =
     | 'ticker'
@@ -280,7 +282,6 @@
                 >
                   {row.pos.ticker}
                 </button>
-                <TickerLinks ticker={row.pos.ticker} size="sm" />
               </td>
               <td class="mono">{fmtPrice(row.price)}</td>
               <td class="mono day-change" data-direction={dayDir(row.dayChangePct)}>

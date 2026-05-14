@@ -16,15 +16,23 @@
 // watches the active position and triggers `recomputeOne` when ticker or
 // dataState changes.
 //
+// Timeframe (chartPrefs.timeframe) participates in the cache key:
+//  - '1D' switches to the intraday table and SKIPS indicator math.
+//  - All other timeframes pass `since` to the daily queries so they
+//    return only the windowed slice (1M/3M/6M/YTD/1Y/2Y/All).
+//
 // Uses Svelte 5 runes — file must end in `.svelte.ts`.
 
 import { dataState } from './data.svelte';
 import { settings } from './settings.svelte';
 import { viewState } from './viewState.svelte';
+import { chartPrefs, timeframeSince, type Timeframe } from './chartPrefs.svelte';
 import {
   getCandles,
   getSma,
   getVolumeBars,
+  getIntradayCandles,
+  getIntradayVolumeBars,
   type Candle,
   type MaPoint,
   type VolumeBar,
@@ -53,6 +61,7 @@ export interface PerTickerEval {
   generation: number;
   candles: Candle[];
   sma20: MaPoint[];
+  sma50: MaPoint[];
   sma200: MaPoint[];
   volume: VolumeBar[];
   rsi: RsiPoint[];
@@ -70,6 +79,10 @@ export interface PerTickerEval {
    * indicator without re-reading viewState directly.
    */
   asOfDate: string | null;
+  /** The timeframe this slice was computed for. */
+  timeframe: Timeframe;
+  /** True when this slice came from the intraday table (timeframe='1D'). */
+  isIntraday: boolean;
 }
 
 export interface EvalState {
@@ -87,6 +100,7 @@ function emptySlice(): PerTickerEval {
     generation: 0,
     candles: [],
     sma20: [],
+    sma50: [],
     sma200: [],
     volume: [],
     rsi: [],
@@ -97,6 +111,8 @@ function emptySlice(): PerTickerEval {
     latestClose: null,
     prevClose: null,
     asOfDate: null,
+    timeframe: '1Y',
+    isIntraday: false,
   };
 }
 
@@ -151,14 +167,13 @@ export function getEval(ticker: string): PerTickerEval {
  */
 const STABLE_EMPTY_SLICE: PerTickerEval = Object.freeze(emptySlice()) as PerTickerEval;
 
-// In-flight guard per (ticker, asOf) tuple so back-to-back triggers
-// (e.g. from a $effect firing on multiple deps) don't double-fetch the
-// same slice — but a date switch mid-flight DOES schedule a fresh run
-// because the dedupe key includes asOf.
+// In-flight guard per (ticker, asOf, timeframe) tuple so back-to-back
+// triggers don't double-fetch the same slice. Switching either the
+// date OR the timeframe scopes a fresh request.
 const inFlight = new Map<string, Promise<void>>();
 
-function flightKey(ticker: string, asOf: string | null): string {
-  return `${ticker}|${asOf ?? 'live'}`;
+function flightKey(ticker: string, asOf: string | null, timeframe: Timeframe): string {
+  return `${ticker}|${asOf ?? 'live'}|${timeframe}`;
 }
 
 /**
@@ -172,33 +187,79 @@ function flightKey(ticker: string, asOf: string | null): string {
  * follow-up `recomputeOne` so the slice eventually settles to the
  * current view. Without this, switching dates while a recompute was in
  * flight could leave the UI permanently showing data for the old date.
+ *
+ * Branching:
+ *   - timeframe === '1D' → intraday path: read ohlcv_intraday, skip
+ *     SMA/RSI/MACD/witness math (those are daily-only concepts).
+ *   - other timeframes → daily path: pass `since` to all queries so
+ *     each is windowed to (asOf - tfWindow)..asOf.
  */
 export async function recomputeOne(ticker: string): Promise<void> {
   const t = ticker.trim().toUpperCase();
   if (!t) return;
 
-  // Snapshot the asOfDate at the start of recompute so the same value is
-  // used for every parallel query AND stamped on the slice.
+  // Snapshot the asOfDate AND timeframe at the start of recompute so the
+  // same values are used for every parallel query AND stamped on the slice.
   const asOf = viewState.asOfDate;
-  const key = flightKey(t, asOf);
+  const timeframe = chartPrefs.timeframe;
+  const key = flightKey(t, asOf, timeframe);
 
   const existing = inFlight.get(key);
   if (existing) return existing;
 
-  // ensureSlice (not getEval) — recompute is the canonical write path,
-  // so it owns the slice insertion if it isn't already there. Returns
-  // the live slice; subsequent mutations bump reactivity for consumers
-  // that already had the key registered as a dependency.
   const slice = ensureSlice(t);
   const work = (async () => {
     slice.loading = true;
     slice.error = null;
     try {
-      const [candles, sma20, sma200, volume, closes] = await Promise.all([
-        getCandles(t, asOf),
-        getSma(t, 20, asOf),
-        getSma(t, 200, asOf),
-        getVolumeBars(t, asOf),
+      if (timeframe === '1D') {
+        // Intraday path. Indicator math doesn't apply to 5min bars in
+        // any meaningful way (Wilder RSI on intraday is pure noise) so
+        // we surface candles + volume only and zero out the rest.
+        const [candles, volume] = await Promise.all([
+          getIntradayCandles(t, asOf),
+          getIntradayVolumeBars(t, asOf),
+        ]);
+
+        slice.candles = candles;
+        slice.sma20 = [];
+        slice.sma50 = [];
+        slice.sma200 = [];
+        slice.volume = volume;
+        slice.rsi = [];
+        slice.macd = [];
+        slice.closes = [];
+        // Keep the existing summary so the StatusBanner conviction
+        // dot doesn't flicker to "neutral" when the user toggles 1D —
+        // conviction is a daily-bars concept and this view is a
+        // momentary live look. If we wanted strict consistency we'd
+        // null it; trading off in favour of stable banner UI.
+        slice.divergence = null;
+        slice.latestClose = candles.length > 0 ? candles[candles.length - 1].close : null;
+        slice.prevClose =
+          candles.length >= 2 ? candles[candles.length - 2].close : null;
+        slice.asOfDate = asOf;
+        slice.timeframe = timeframe;
+        slice.isIntraday = true;
+        slice.generation += 1;
+        return;
+      }
+
+      // Daily path. Compute the lower bound from the timeframe window
+      // anchored to "today" (not asOf — the intent of YTD/1Y is calendar-
+      // based, not relative-to-the-historical-snapshot).
+      const since = timeframeSince(timeframe, new Date());
+
+      const [candles, sma20, sma50, sma200, volume, closes] = await Promise.all([
+        getCandles(t, asOf, since),
+        getSma(t, 20, asOf, since),
+        getSma(t, 50, asOf, since),
+        getSma(t, 200, asOf, since),
+        getVolumeBars(t, asOf, since),
+        // Closes are pulled WITHOUT `since` so RSI/MACD have warmup
+        // history; the resulting indicator series naturally starts
+        // earlier than `since` in some cases — the chart's time scale
+        // clips the visible range either way.
         getCloses(t, asOf),
       ]);
 
@@ -206,6 +267,7 @@ export async function recomputeOne(ticker: string): Promise<void> {
         // Empty out — keeps existing consumers' "no data" placeholders honest.
         slice.candles = [];
         slice.sma20 = [];
+        slice.sma50 = [];
         slice.sma200 = [];
         slice.volume = [];
         slice.rsi = [];
@@ -216,6 +278,8 @@ export async function recomputeOne(ticker: string): Promise<void> {
         slice.latestClose = null;
         slice.prevClose = null;
         slice.asOfDate = asOf;
+        slice.timeframe = timeframe;
+        slice.isIntraday = false;
         slice.generation += 1;
         return;
       }
@@ -230,6 +294,7 @@ export async function recomputeOne(ticker: string): Promise<void> {
 
       slice.candles = candles;
       slice.sma20 = sma20;
+      slice.sma50 = sma50;
       slice.sma200 = sma200;
       slice.volume = volume;
       slice.rsi = rsi;
@@ -241,6 +306,8 @@ export async function recomputeOne(ticker: string): Promise<void> {
       slice.prevClose =
         candles.length >= 2 ? candles[candles.length - 2].close : null;
       slice.asOfDate = asOf;
+      slice.timeframe = timeframe;
+      slice.isIntraday = false;
       slice.generation += 1;
     } catch (err) {
       slice.error = err instanceof Error ? err.message : String(err);
@@ -250,10 +317,10 @@ export async function recomputeOne(ticker: string): Promise<void> {
     }
   })().finally(() => {
     inFlight.delete(key);
-    // Date switched mid-flight? Schedule a follow-up so the slice
-    // eventually reflects the current viewState. We do this AFTER the
+    // Date or timeframe switched mid-flight? Schedule a follow-up so
+    // the slice eventually reflects the current view. Done AFTER the
     // map cleanup so the recursive call doesn't see its own promise.
-    if (viewState.asOfDate !== asOf) {
+    if (viewState.asOfDate !== asOf || chartPrefs.timeframe !== timeframe) {
       void recomputeOne(t);
     }
   });

@@ -148,6 +148,23 @@ export async function ensureSchema(
           PRIMARY KEY (ticker, dt)
         );
       `);
+      // Intraday bars (5-minute granularity by default). Kept in a
+      // separate table from `ohlcv` so the daily indicator math
+      // (SMA/RSI/MACD windows) doesn't accidentally mix bar sizes,
+      // and so a wipe-and-reload of intraday on each "1D" view doesn't
+      // touch the long-running daily history.
+      await c.query(`
+        CREATE TABLE IF NOT EXISTS ohlcv_intraday (
+          ticker VARCHAR NOT NULL,
+          ts TIMESTAMP NOT NULL,
+          open DOUBLE NOT NULL,
+          high DOUBLE NOT NULL,
+          low DOUBLE NOT NULL,
+          close DOUBLE NOT NULL,
+          volume BIGINT,
+          PRIMARY KEY (ticker, ts)
+        );
+      `);
       await c.query(`
         CREATE TABLE IF NOT EXISTS fetch_log (
           ticker VARCHAR NOT NULL,
