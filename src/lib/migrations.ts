@@ -208,10 +208,12 @@ export const MIGRATIONS: Migration[] = [
           continue;
         }
 
-        // RSI(14)
+        // RSI(14). NOTE: WITH RECURSIVE keyword is REQUIRED — the
+        // recursive_rsi CTE references itself in its UNION ALL branch.
+        // See sqlIndicators.ts materializeRsi for context.
         await conn.query(`
           INSERT INTO indicators_rsi (ticker, dt, period, value)
-          WITH ordered AS (
+          WITH RECURSIVE ordered AS (
             SELECT ticker, dt, close,
               LAG(close) OVER (ORDER BY dt) AS prev_close,
               ROW_NUMBER() OVER (ORDER BY dt) AS rn
@@ -252,10 +254,160 @@ export const MIGRATIONS: Migration[] = [
         const fastK = 2.0 / 13;
         const slowK = 2.0 / 27;
         const signalK = 2.0 / 10;
+        // MACD(12,26,9). WITH RECURSIVE required (fast_ema, slow_ema,
+        // and signal_ema all self-reference).
         await conn.query(`
           INSERT INTO indicators_macd
             (ticker, dt, fast_period, slow_period, signal_period, macd_line, signal_line, histogram)
-          WITH ordered AS (
+          WITH RECURSIVE ordered AS (
+            SELECT dt, close, ROW_NUMBER() OVER (ORDER BY dt) AS rn
+            FROM ohlcv WHERE ticker = '${ticker}'
+          ),
+          fast_seed AS (
+            SELECT 12 AS rn, AVG(close) AS ema FROM ordered WHERE rn BETWEEN 1 AND 12
+          ),
+          fast_ema (rn, ema) AS (
+            SELECT rn, ema FROM fast_seed
+            UNION ALL
+            SELECT o.rn, o.close * ${fastK} + f.ema * (1 - ${fastK})
+            FROM fast_ema f JOIN ordered o ON o.rn = f.rn + 1
+          ),
+          slow_seed AS (
+            SELECT 26 AS rn, AVG(close) AS ema FROM ordered WHERE rn BETWEEN 1 AND 26
+          ),
+          slow_ema (rn, ema) AS (
+            SELECT rn, ema FROM slow_seed
+            UNION ALL
+            SELECT o.rn, o.close * ${slowK} + s.ema * (1 - ${slowK})
+            FROM slow_ema s JOIN ordered o ON o.rn = s.rn + 1
+          ),
+          macd_line_calc AS (
+            SELECT f.rn, o.dt, f.ema - s.ema AS macd_line
+            FROM fast_ema f
+            JOIN slow_ema s ON s.rn = f.rn
+            JOIN ordered o ON o.rn = f.rn
+            WHERE f.rn >= 26
+          ),
+          macd_with_seed_rn AS (
+            SELECT rn, dt, macd_line,
+              ROW_NUMBER() OVER (ORDER BY rn) AS macd_rn
+            FROM macd_line_calc
+          ),
+          signal_seed AS (
+            SELECT 9 AS macd_rn, AVG(macd_line) AS ema
+            FROM macd_with_seed_rn WHERE macd_rn BETWEEN 1 AND 9
+          ),
+          signal_ema (macd_rn, ema) AS (
+            SELECT macd_rn, ema FROM signal_seed
+            UNION ALL
+            SELECT m.macd_rn, m.macd_line * ${signalK} + se.ema * (1 - ${signalK})
+            FROM signal_ema se
+            JOIN macd_with_seed_rn m ON m.macd_rn = se.macd_rn + 1
+          )
+          SELECT '${ticker}' AS ticker, m.dt,
+            12 AS fast_period, 26 AS slow_period, 9 AS signal_period,
+            m.macd_line, se.ema AS signal_line,
+            m.macd_line - se.ema AS histogram
+          FROM signal_ema se
+          JOIN macd_with_seed_rn m ON m.macd_rn = se.macd_rn
+        `);
+      }
+    },
+  },
+  {
+    version: 5,
+    description:
+      'Re-run RSI/MACD backfill with corrected WITH RECURSIVE syntax (v4 silently failed on existing OPFS data)',
+    up: async (conn) => {
+      // Why this migration exists:
+      //
+      // v4 introduced the indicator backfill but the recursive CTEs were
+      // missing the `RECURSIVE` keyword. DuckDB rejected those CTEs at
+      // parse time. Migration v4 was wrapped in a transaction that
+      // caught and rolled back, but `runMigrations` re-threw — so v4
+      // either never recorded as applied (in which case this v5 will
+      // see schema_version still <= 3 and v4 with the corrected SQL
+      // will run), OR v4 ran with no-op behaviour (no tickers had >=15
+      // rows at the time, so the per-ticker INSERT never executed).
+      //
+      // Either way, users whose schema_version reached 4 may have empty
+      // indicator tables despite having OHLCV data. v5 force-rebuilds
+      // indicators for every ticker that has OHLCV rows but no
+      // indicator rows. Same shape as v4's body, with the corrected
+      // syntax inlined so this migration is self-contained against
+      // future refactors of sqlIndicators.ts.
+
+      const tickersResult = await conn.query(`
+        SELECT DISTINCT o.ticker
+        FROM ohlcv o
+        LEFT JOIN indicators_rsi r ON r.ticker = o.ticker
+        WHERE r.ticker IS NULL
+        GROUP BY o.ticker
+        HAVING COUNT(*) >= 15
+      `);
+      const tickers = tickersResult
+        .toArray()
+        .map((row) => (row.toJSON() as { ticker: string }).ticker);
+
+      if (tickers.length === 0) return;
+
+      console.info(
+        `migration v5: backfilling indicators for ${tickers.length} ticker(s): ${tickers.join(', ')}`,
+      );
+
+      const fastK = 2.0 / 13;
+      const slowK = 2.0 / 27;
+      const signalK = 2.0 / 10;
+
+      for (const ticker of tickers) {
+        if (!/^[A-Z0-9]{1,10}$/.test(ticker)) {
+          console.warn(`migration v5: skipping malformed ticker '${ticker}'`);
+          continue;
+        }
+
+        // RSI(14) — corrected with WITH RECURSIVE.
+        await conn.query(`
+          INSERT INTO indicators_rsi (ticker, dt, period, value)
+          WITH RECURSIVE ordered AS (
+            SELECT ticker, dt, close,
+              LAG(close) OVER (ORDER BY dt) AS prev_close,
+              ROW_NUMBER() OVER (ORDER BY dt) AS rn
+            FROM ohlcv WHERE ticker = '${ticker}'
+          ),
+          changes AS (
+            SELECT rn, dt,
+              GREATEST(close - prev_close, 0) AS gain,
+              GREATEST(prev_close - close, 0) AS loss
+            FROM ordered WHERE prev_close IS NOT NULL
+          ),
+          seed AS (
+            SELECT 15 AS rn,
+              AVG(gain) AS avg_gain, AVG(loss) AS avg_loss
+            FROM changes WHERE rn BETWEEN 2 AND 15
+          ),
+          recursive_rsi (rn, avg_gain, avg_loss) AS (
+            SELECT rn, avg_gain, avg_loss FROM seed
+            UNION ALL
+            SELECT c.rn,
+              (r.avg_gain * 13 + c.gain) / 14.0,
+              (r.avg_loss * 13 + c.loss) / 14.0
+            FROM recursive_rsi r
+            JOIN changes c ON c.rn = r.rn + 1
+          )
+          SELECT '${ticker}' AS ticker, c.dt, 14 AS period,
+            CASE
+              WHEN r.avg_loss = 0 THEN 100.0
+              ELSE 100.0 - (100.0 / (1.0 + r.avg_gain / r.avg_loss))
+            END AS value
+          FROM recursive_rsi r
+          JOIN changes c ON c.rn = r.rn
+        `);
+
+        // MACD(12,26,9) — corrected with WITH RECURSIVE.
+        await conn.query(`
+          INSERT INTO indicators_macd
+            (ticker, dt, fast_period, slow_period, signal_period, macd_line, signal_line, histogram)
+          WITH RECURSIVE ordered AS (
             SELECT dt, close, ROW_NUMBER() OVER (ORDER BY dt) AS rn
             FROM ohlcv WHERE ticker = '${ticker}'
           ),

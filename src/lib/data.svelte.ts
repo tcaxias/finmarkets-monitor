@@ -111,18 +111,24 @@ export async function refreshData(tickerArg?: string): Promise<boolean> {
     } catch (logErr) {
       console.warn('Failed to write fetch_log (non-fatal):', logErr);
     }
-    // Recompute the materialised RSI/MACD tables for this ticker. Wrapped
-    // in try/catch as best-effort: the chart can still render OHLCV +
-    // SMA without indicators (the indicator panes simply show empty
-    // until the next successful refresh). A failure here MUST NOT mask
-    // the success of the data fetch — the caller's `ok = true` follows.
+    // Recompute the materialised RSI/MACD tables for this ticker. The
+    // OHLCV insert above is the source of truth — even if indicators
+    // fail to materialise, the chart renders correctly. We previously
+    // swallowed errors silently to console.warn, which let a real bug
+    // (missing WITH RECURSIVE keyword in the CTE) hide for an entire
+    // commit cycle. Now we surface the error to dataState.error so the
+    // user sees it in the UI, but we still don't reject the refresh
+    // (`ok = true` runs below) — that way the OHLCV data is present and
+    // usable while the user can investigate the indicator failure.
     try {
       await refreshIndicators(ticker);
     } catch (indErr) {
+      const msg = indErr instanceof Error ? indErr.message : String(indErr);
       console.warn(
-        'Indicator refresh failed (non-fatal — chart will still render OHLCV):',
+        'Indicator refresh failed (chart will still render OHLCV; investigate):',
         indErr,
       );
+      dataState.error = `Indicator refresh failed for ${ticker}: ${msg}`;
     }
     await refreshState(ticker);
     ok = true;

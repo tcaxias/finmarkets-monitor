@@ -99,9 +99,15 @@ export async function materializeRsi(
   //
   // Final SELECT joins back to `changes` for the dt of each rn so we
   // attach the correct date to each RSI value.
+  // NOTE: `WITH RECURSIVE` keyword is REQUIRED for self-referencing
+  // CTEs in DuckDB (the `recursive_rsi` CTE references itself in its
+  // UNION ALL branch). Without `RECURSIVE`, DuckDB rejects the SQL with
+  // an "undefined reference" error at parse time. The earlier version of
+  // this code omitted the keyword and was silently swallowed by the
+  // try/catch in data.svelte.ts, leaving the indicator panes blank.
   const sql = `
     INSERT INTO indicators_rsi (ticker, dt, period, value)
-    WITH ordered AS (
+    WITH RECURSIVE ordered AS (
       SELECT
         dt,
         close,
@@ -211,10 +217,13 @@ export async function materializeMacd(
   // The final SELECT joins signal_ema back to macd_with_seed_rn so we
   // can output (dt, macd_line, signal_line, histogram) together — only
   // the rows where the signal EMA is defined make it out.
+  // NOTE: `WITH RECURSIVE` keyword is REQUIRED for self-referencing
+  // CTEs (fast_ema, slow_ema, signal_ema all reference themselves in
+  // their UNION ALL branch). See materializeRsi for the full rationale.
   const sql = `
     INSERT INTO indicators_macd
       (ticker, dt, fast_period, slow_period, signal_period, macd_line, signal_line, histogram)
-    WITH ordered AS (
+    WITH RECURSIVE ordered AS (
       SELECT
         dt,
         close,
