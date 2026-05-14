@@ -19,6 +19,7 @@
   import PositionTabs from './components/PositionTabs.svelte';
   import PortfolioOverview from './components/PortfolioOverview.svelte';
   import PortfolioCharts from './components/PortfolioCharts.svelte';
+  import PortfolioReview from './components/PortfolioReview.svelte';
   import ScreenerPanel from './components/ScreenerPanel.svelte';
   import AnomaliesPanel from './components/AnomaliesPanel.svelte';
   import PositionsPanel from './components/PositionsPanel.svelte';
@@ -195,6 +196,7 @@
         <a href="#screener">Screener</a>
         <a href="#anomalies">Anomalies</a>
         <a href="#chart">Charts</a>
+        <a href="#review">Review</a>
       {/if}
       {#if activePosition}
         <a href="#witnesses">Witnesses</a>
@@ -248,6 +250,9 @@
       </section>
       <section class="container wide stack" id="chart">
         <PortfolioCharts />
+      </section>
+      <section class="container narrow stack" id="review">
+        <PortfolioReview />
       </section>
     {:else}
       <section class="container narrow stack" id="witnesses">

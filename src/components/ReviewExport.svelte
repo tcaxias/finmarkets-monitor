@@ -1,15 +1,37 @@
 <script lang="ts">
-  // Sunday weekly-review export panel for the active position.
+  // Sunday weekly-review export panel.
   //
-  // Phase A multi-ticker rewrite: reads from `getEval(activeTicker)` and
-  // uses the active position's ticker, vest data, and tax due date.
+  // Renders in two contexts:
+  //   1. Per-ticker view (no `ticker` prop) — falls back to
+  //      `getActivePosition()`, which is the historical default.
+  //   2. Portfolio view (via PortfolioReview wrapper, which passes
+  //      a `ticker` prop) — locks to the supplied ticker so the
+  //      portfolio-level wrapper can offer a ticker-picker dropdown
+  //      without requiring users to switch tabs first.
+  //
+  // Either way, the generated markdown is the same per-ticker review
+  // (the methodology is intentionally per-position — see the canonical
+  // template at ~/docs/finmarkets/weekly-review.md).
 
-  import { settings, getActivePosition } from '../lib/settings.svelte';
+  import {
+    settings,
+    getActivePosition,
+    getPositionByTicker,
+    type Position,
+  } from '../lib/settings.svelte';
   import { dataState } from '../lib/data.svelte';
   import { getEval } from '../lib/evaluation.svelte';
   import { viewState } from '../lib/viewState.svelte';
   import { computeThresholds } from '../lib/math';
   import { generateSundayReview } from '../lib/sundayReview';
+
+  // Optional `ticker` prop. When provided, the review is generated for
+  // that ticker regardless of which tab is active. When omitted, falls
+  // back to the active position (per-ticker view's standard behavior).
+  interface Props {
+    ticker?: string;
+  }
+  let { ticker: tickerProp }: Props = $props();
 
   let markdown = $state<string>('');
   let generating = $state(false);
@@ -18,9 +40,15 @@
   let generatedAtFetch = $state<Date | null>(null);
   let generatedAtTicker = $state<string>('');
 
-  const activePosition = $derived.by(() => {
+  // Resolve the position: explicit prop wins, fallback to active.
+  // Touching settings.activePositionId / positions.length keeps the
+  // derivation reactive to position-list changes.
+  const activePosition = $derived.by((): Position | null => {
     settings.activePositionId;
     settings.positions.length;
+    if (tickerProp) {
+      return getPositionByTicker(tickerProp);
+    }
     return getActivePosition();
   });
 
@@ -138,7 +166,7 @@
   }
 </script>
 
-<section class="review-export" id="review">
+<section class="review-export">
   <header class="panel-header">
     <h2>Sunday Weekly Review</h2>
     {#if generating}
@@ -150,7 +178,11 @@
 
   {#if !activePosition}
     <div class="placeholder">
-      Select a position from the tabs above to generate its weekly review.
+      {#if tickerProp}
+        Position "{tickerProp}" not found in your settings.
+      {:else}
+        Select a position from the tabs above to generate its weekly review.
+      {/if}
     </div>
   {:else}
     <p class="hint">
