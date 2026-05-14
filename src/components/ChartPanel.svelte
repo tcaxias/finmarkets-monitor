@@ -56,6 +56,7 @@
   let sma20Series: ISeriesApi<'Line'> | undefined;
   let sma50Series: ISeriesApi<'Line'> | undefined;
   let sma200Series: ISeriesApi<'Line'> | undefined;
+  let vwapSeries: ISeriesApi<'Line'> | undefined;
   let volumeSeries: ISeriesApi<'Histogram'> | undefined;
   let priceLines: IPriceLine[] = [];
   let resizeObserver: ResizeObserver | undefined;
@@ -87,6 +88,9 @@
     sma20: '#f5d76e',
     sma50: '#60a5fa',
     sma200: '#ef5350',
+    // Purple — distinct from yellow SMA20 / blue SMA50 / red SMA200
+    // so VWAP is unambiguous when overlaid alongside the SMAs.
+    vwap: '#9b59b6',
     pcover: '#ef5350',
     pcoverPlus: '#f59e0b',
     breakeven: '#9ca3af',
@@ -175,6 +179,23 @@
     }
   }
 
+  function ensureVwap(): void {
+    if (!chart || vwapSeries) return;
+    vwapSeries = chart.addSeries(LineSeries, {
+      color: COLORS.vwap,
+      lineWidth: 2,
+      lineStyle: LineStyle.Solid,
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+  }
+  function dropVwap(): void {
+    if (chart && vwapSeries) {
+      chart.removeSeries(vwapSeries);
+      vwapSeries = undefined;
+    }
+  }
+
   function ensureVolume(): void {
     if (!chart || volumeSeries) return;
     volumeSeries = chart.addSeries(HistogramSeries, {
@@ -212,6 +233,7 @@
       sma20Series?.setData([]);
       sma50Series?.setData([]);
       sma200Series?.setData([]);
+      vwapSeries?.setData([]);
       volumeSeries?.setData([]);
       return;
     }
@@ -234,6 +256,11 @@
     if (sma200Series) {
       sma200Series.setData(
         slice.sma200.map((p) => ({ ...p, time: p.time as UTCTimestamp })) as LineData[],
+      );
+    }
+    if (vwapSeries) {
+      vwapSeries.setData(
+        slice.vwap.map((p) => ({ ...p, time: p.time as UTCTimestamp })) as LineData[],
       );
     }
     if (volumeSeries) {
@@ -321,6 +348,7 @@
     void chartPrefs.showSma20;
     void chartPrefs.showSma50;
     void chartPrefs.showSma200;
+    void chartPrefs.showVwap;
     void chartPrefs.showVolume;
 
     if (chartPrefs.showSma20 && !isIntraday) ensureSma20();
@@ -331,6 +359,11 @@
 
     if (chartPrefs.showSma200 && !isIntraday) ensureSma200();
     else dropSma200();
+
+    // VWAP is a daily-only overlay (slice.vwap is empty in intraday
+    // mode), and rendering an empty series would just clutter the chart.
+    if (chartPrefs.showVwap && !isIntraday) ensureVwap();
+    else dropVwap();
 
     if (chartPrefs.showVolume) ensureVolume();
     else dropVolume();
@@ -354,6 +387,7 @@
     if (chartPrefs.showSma20) ensureSma20();
     if (chartPrefs.showSma50) ensureSma50();
     if (chartPrefs.showSma200) ensureSma200();
+    if (chartPrefs.showVwap) ensureVwap();
     if (chartPrefs.showVolume) ensureVolume();
 
     renderFromCache();
@@ -380,6 +414,7 @@
       sma20Series = undefined;
       sma50Series = undefined;
       sma200Series = undefined;
+      vwapSeries = undefined;
       volumeSeries = undefined;
     };
   });

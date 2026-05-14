@@ -5,6 +5,35 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added (VWAP overlay)
+
+- **20-day rolling VWAP (Volume-Weighted Average Price)** as a new
+  toggleable chart overlay. Off by default — additional to the
+  existing SMA20/50/200, not a replacement. Why VWAP: weights each
+  bar's contribution by its volume so high-volume days count more
+  than thin holiday/summer bars; commonly used as a "fair value"
+  reference (price above = buyers paying above the volume-weighted
+  consensus, below = selling pressure dominating). New `getVwap` in
+  `src/lib/queries.ts` uses `SUM(close * volume) / SUM(volume)`
+  windowed over N bars; non-recursive (VWAP is a weighted average,
+  not a smoothed indicator). `COALESCE(volume, 0)` handles the
+  occasional NULL-volume bars from Twelve Data — they contribute 0
+  to both numerator and denominator and are effectively skipped from
+  the weighted average rather than crashing the query. Wired through
+  `chartPrefs` (new `showVwap` toggle, default false), `ChartToolbar`
+  (new VWAP button between SMA200 and Vol, daily-only),
+  `evaluation.svelte.ts` (new `vwap: VwapPoint[]` field on
+  `PerTickerEval`, fetched alongside the SMAs), `ChartPanel`
+  (`ensureVwap`/`dropVwap` series lifecycle pair, purple `#9b59b6`
+  to stay visually distinct from the SMA palette), and
+  `IndicatorDescriptions` / `IndicatorsAbout`. Four new integration
+  tests in `src/lib/__tests__/queries.integration.test.ts` exercise
+  the VWAP SQL against the new DuckDB fixture: warmup row count
+  (`count - period + 1`), monotonicity on a pure uptrend, the
+  defining "high-volume bar pulls VWAP further than low-volume bar
+  at the same close" property, and NULL-volume safety. Bundle impact
+  ~negligible (+2 kB raw / +0.5 kB gz). Total tests: 262 (up from 258).
+
 ### Added (DuckDB integration tests)
 
 - **DuckDB integration tests via `@duckdb/node-api`.** New

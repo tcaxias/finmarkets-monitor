@@ -204,6 +204,92 @@ export async function getSma(
   }
 }
 
+export interface VwapPoint {
+  time: number; // unix seconds
+  value: number;
+}
+
+/**
+ * Rolling N-day Volume-Weighted Average Price.
+ *
+ *   VWAP_t = SUM(close * volume) / SUM(volume) over the trailing N bars.
+ *
+ * Returns one point per bar where N preceding bars are available
+ * (warmup window: skips bars where the rolling window isn't full,
+ * matching the SMA contract above).
+ *
+ * Uses DuckDB's window functions; no recursive CTE needed — VWAP is
+ * just a weighted moving average, not a smoothed indicator like
+ * RSI/MACD where each value depends on the previous.
+ *
+ * Volume can be NULL for some bars (Twelve Data occasionally returns
+ * empty volume — see `toNullableNum` in this file). Bars with NULL
+ * volume contribute 0 to both numerator and denominator via
+ * COALESCE, which is the correct behavior — they're effectively
+ * skipped from the weighted average rather than crashing the query
+ * or polluting the result with NULL arithmetic.
+ *
+ * `asOf` and `since` follow the same windowing rules as `getSma`:
+ * `asOf` filters inside the SELECT (so the rolling window doesn't
+ * borrow from the future), `since` is applied as an outer predicate
+ * (so the N-bar warmup still uses bars before `since` — only the
+ * OUTPUT rows are clipped to the requested range).
+ */
+export async function getVwap(
+  ticker: string,
+  period: number = 20,
+  asOf?: string | null,
+  since?: string | null,
+): Promise<VwapPoint[]> {
+  if (!Number.isInteger(period) || period < 1) {
+    throw new Error(`getVwap: period must be a positive integer (got ${period})`);
+  }
+  const conn = await getConn();
+  // `period` is inlined for the same reason as `getSma`: it's a fixed
+  // constant (20), never user input, and DuckDB rejects bind parameters
+  // inside ROWS BETWEEN ... PRECEDING.
+  const { clause: asOfClause, params: asOfParams } = dailyWhere(ticker, asOf, null);
+  const sql = `
+    SELECT * FROM (
+      WITH w AS (
+        SELECT
+          dt,
+          epoch(dt)::BIGINT AS time,
+          SUM(COALESCE(close * volume, 0)) OVER (
+            ORDER BY dt
+            ROWS BETWEEN ${period - 1} PRECEDING AND CURRENT ROW
+          ) AS num,
+          SUM(COALESCE(volume, 0)) OVER (
+            ORDER BY dt
+            ROWS BETWEEN ${period - 1} PRECEDING AND CURRENT ROW
+          ) AS den,
+          COUNT(*) OVER (
+            ORDER BY dt
+            ROWS BETWEEN ${period - 1} PRECEDING AND CURRENT ROW
+          ) AS w_size
+        FROM ohlcv
+        ${asOfClause}
+      )
+      SELECT dt, time, num / NULLIF(den, 0) AS value
+      FROM w
+      WHERE w_size >= ${period} AND den > 0
+    )
+    ${since ? 'WHERE dt >= CAST(? AS DATE)' : ''}
+    ORDER BY dt
+  `;
+  const params = since ? [...asOfParams, since] : asOfParams;
+  const stmt = await conn.prepare(sql);
+  try {
+    const tbl = await stmt.query(...params);
+    return tbl.toArray().map((row) => {
+      const r = row.toJSON() as Record<string, unknown>;
+      return { time: toNum(r.time), value: toNum(r.value) };
+    });
+  } finally {
+    await stmt.close();
+  }
+}
+
 export async function getVolumeBars(
   ticker: string,
   asOf?: string | null,

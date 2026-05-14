@@ -19,6 +19,7 @@ export interface ChartPrefs {
   showSma20: boolean;
   showSma50: boolean;
   showSma200: boolean;
+  showVwap: boolean;
   showVolume: boolean;
   /** Pcover and Pcover+20% horizontal price lines (RSU exit framework). */
   showPcoverLines: boolean;
@@ -33,6 +34,10 @@ const DEFAULTS: ChartPrefs = {
   showSma20: true,
   showSma50: false,
   showSma200: true,
+  // VWAP defaults off — it's an additional overlay alongside the SMAs,
+  // not a core series. Users opt in if they care about
+  // volume-weighted "fair value" reference.
+  showVwap: false,
   showVolume: true,
   showPcoverLines: true,
   showVestLine: true,
@@ -71,6 +76,7 @@ function loadFromStorage(): ChartPrefs {
       'showSma20',
       'showSma50',
       'showSma200',
+      'showVwap',
       'showVolume',
       'showPcoverLines',
       'showVestLine',

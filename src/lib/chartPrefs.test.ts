@@ -62,6 +62,7 @@ describe('chartPrefs', () => {
       expect(mod.chartPrefs.showSma20).toBe(true);
       expect(mod.chartPrefs.showSma50).toBe(false);
       expect(mod.chartPrefs.showSma200).toBe(true);
+      expect(mod.chartPrefs.showVwap).toBe(false);
       expect(mod.chartPrefs.showVolume).toBe(true);
       expect(mod.chartPrefs.showPcoverLines).toBe(true);
       expect(mod.chartPrefs.showVestLine).toBe(true);
@@ -99,6 +100,7 @@ describe('chartPrefs', () => {
           showSma20: false,
           showSma50: true,
           showSma200: false,
+          showVwap: true,
           showVolume: false,
           showPcoverLines: false,
           showVestLine: false,
@@ -111,6 +113,7 @@ describe('chartPrefs', () => {
       expect(mod.chartPrefs.showSma20).toBe(false);
       expect(mod.chartPrefs.showSma50).toBe(true);
       expect(mod.chartPrefs.showSma200).toBe(false);
+      expect(mod.chartPrefs.showVwap).toBe(true);
       expect(mod.chartPrefs.showVolume).toBe(false);
       expect(mod.chartPrefs.showPcoverLines).toBe(false);
       expect(mod.chartPrefs.showVestLine).toBe(false);

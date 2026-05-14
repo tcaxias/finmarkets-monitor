@@ -38,6 +38,11 @@ export const INDICATOR_DESCRIPTIONS = {
     description:
       'Long-term regime line. Price above it = long-term bull market; below it = long-term bear. Heavily watched; algorithms trade off it.',
   },
+  vwap: {
+    label: 'VWAP(20) (purple)',
+    description:
+      '20-day Volume-Weighted Average Price. Like a simple moving average, but weights each bar by its volume — high-volume days count more. Often used as a "fair value" reference: price above VWAP suggests buyers are willing to pay above the volume-weighted consensus, price below suggests selling pressure dominating. Differs from SMA in that low-volume bars (typical of holidays, summer doldrums) contribute less to the average.',
+  },
   rsi: {
     label: 'RSI(14)',
     description:

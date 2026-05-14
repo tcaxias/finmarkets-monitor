@@ -16,6 +16,7 @@
     'sma20',
     'sma50',
     'sma200',
+    'vwap',
     'rsi',
     'macd',
     'pcover',

@@ -35,6 +35,7 @@
     | 'showSma20'
     | 'showSma50'
     | 'showSma200'
+    | 'showVwap'
     | 'showVolume'
     | 'showPcoverLines'
     | 'showVestLine'
@@ -53,6 +54,7 @@
     { key: 'showSma20', short: 'SMA20', indicator: 'sma20', dailyOnly: true },
     { key: 'showSma50', short: 'SMA50', indicator: 'sma50', dailyOnly: true },
     { key: 'showSma200', short: 'SMA200', indicator: 'sma200', dailyOnly: true },
+    { key: 'showVwap', short: 'VWAP', indicator: 'vwap', dailyOnly: true },
     { key: 'showVolume', short: 'Vol', indicator: 'volume', dailyOnly: false },
     { key: 'showPcoverLines', short: 'Pcover', indicator: 'pcover', dailyOnly: false },
     { key: 'showVestLine', short: 'Vest', indicator: 'vest', dailyOnly: false },

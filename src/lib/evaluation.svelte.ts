@@ -30,12 +30,14 @@ import { chartPrefs, timeframeSince, type Timeframe } from './chartPrefs.svelte'
 import {
   getCandles,
   getSma,
+  getVwap,
   getVolumeBars,
   getIntradayCandles,
   getIntradayVolumeBars,
   type Candle,
   type MaPoint,
   type VolumeBar,
+  type VwapPoint,
 } from './queries';
 import {
   detectRsiDivergence,
@@ -61,6 +63,9 @@ export interface PerTickerEval {
   sma20: MaPoint[];
   sma50: MaPoint[];
   sma200: MaPoint[];
+  /** 20-day rolling volume-weighted average price. Daily-only;
+   *  empty in intraday mode (same lifecycle as the SMA series). */
+  vwap: VwapPoint[];
   volume: VolumeBar[];
   rsi: RsiPoint[];
   macd: MacdPoint[];
@@ -100,6 +105,7 @@ function emptySlice(): PerTickerEval {
     sma20: [],
     sma50: [],
     sma200: [],
+    vwap: [],
     volume: [],
     rsi: [],
     macd: [],
@@ -223,6 +229,7 @@ export async function recomputeOne(ticker: string): Promise<void> {
         slice.sma20 = [];
         slice.sma50 = [];
         slice.sma200 = [];
+        slice.vwap = [];
         slice.volume = volume;
         slice.rsi = [];
         slice.macd = [];
@@ -248,13 +255,17 @@ export async function recomputeOne(ticker: string): Promise<void> {
       // based, not relative-to-the-historical-snapshot).
       const since = timeframeSince(timeframe, new Date());
 
-      const [candles, sma20, sma50, sma200, volume, rsiFull, macdFull] =
+      const [candles, sma20, sma50, sma200, volume, vwap, rsiFull, macdFull] =
         await Promise.all([
           getCandles(t, asOf, since),
           getSma(t, 20, asOf, since),
           getSma(t, 50, asOf, since),
           getSma(t, 200, asOf, since),
           getVolumeBars(t, asOf, since),
+          // VWAP(20) — same windowing semantics as getSma: warmup
+          // bars before `since` are still consumed by the rolling
+          // window, only output rows are clipped.
+          getVwap(t, 20, asOf, since),
           // Indicators are read from the materialised tables
           // (indicators_rsi / indicators_macd, populated by
           // refreshIndicators after every OHLCV insert — see
@@ -271,6 +282,7 @@ export async function recomputeOne(ticker: string): Promise<void> {
         slice.sma20 = [];
         slice.sma50 = [];
         slice.sma200 = [];
+        slice.vwap = [];
         slice.volume = [];
         slice.rsi = [];
         slice.macd = [];
@@ -332,6 +344,7 @@ export async function recomputeOne(ticker: string): Promise<void> {
       slice.sma20 = sma20;
       slice.sma50 = sma50;
       slice.sma200 = sma200;
+      slice.vwap = vwap;
       slice.volume = volume;
       slice.rsi = rsi;
       slice.macd = macd;
