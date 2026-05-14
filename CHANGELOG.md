@@ -14,8 +14,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   above the candle bars, and surfaces the 4 most recent events in a
   small per-ticker widget between Witnesses and Chart. Why: earnings
   are often inflection points — gap moves the day after earnings tend
-  to set the next 1–3 month regime, so making "what happened to AAPL
-  around earnings" visually obvious is high-signal annotation.
+  to set the next 1–3 month regime, so making "what happened to a
+  ticker around earnings" visually obvious is high-signal annotation.
   - **Migration v6** (`src/lib/migrations.ts`): `earnings_events
     (ticker, dt, time_of_day, eps_estimate, eps_actual, surprise_pct,
     fetched_at)` with `(ticker, dt)` PK so re-fetches via INSERT OR
