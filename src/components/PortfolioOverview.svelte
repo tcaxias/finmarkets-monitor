@@ -11,6 +11,7 @@
   import { dataState } from '../lib/data.svelte';
   import { viewState } from '../lib/viewState.svelte';
   import { computeThresholds } from '../lib/math';
+  import TickerLinks from './TickerLinks.svelte';
 
   type SortKey =
     | 'ticker'
@@ -270,7 +271,7 @@
         <tbody>
           {#each sortedRows as row (row.pos.id)}
             <tr>
-              <td>
+              <td class="ticker-cell">
                 <button
                   type="button"
                   class="ticker-link"
@@ -279,6 +280,7 @@
                 >
                   {row.pos.ticker}
                 </button>
+                <TickerLinks ticker={row.pos.ticker} size="sm" />
               </td>
               <td class="mono">{fmtPrice(row.price)}</td>
               <td class="mono day-change" data-direction={dayDir(row.dayChangePct)}>
@@ -416,6 +418,12 @@
 
   .mono {
     font-family: var(--mono);
+  }
+
+  .ticker-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
 
   .ticker-link {

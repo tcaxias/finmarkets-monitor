@@ -11,6 +11,7 @@
   import { dataState } from '../lib/data.svelte';
   import { settings, getActivePosition } from '../lib/settings.svelte';
   import { computeThresholds } from '../lib/math';
+  import TickerLinks from './TickerLinks.svelte';
 
   // Keep a "now" tick so the relative-time string updates without us having
   // to re-poll on every render. One-minute granularity is plenty.
@@ -146,11 +147,13 @@
     </span>
   {:else if !hasData}
     <span class="ticker-pill">{ticker}</span>
+    <TickerLinks {ticker} size="md" />
     <span class="muted-msg">
       Awaiting data — refresh in the Data panel below.
     </span>
   {:else if slice}
     <span class="ticker-pill">{ticker}</span>
+    <TickerLinks {ticker} size="md" />
 
     <span class="price">{fmtPrice(slice.latestClose)}</span>
 
