@@ -28,6 +28,7 @@
   import RsiPanel from './components/RsiPanel.svelte';
   import MacdPanel from './components/MacdPanel.svelte';
   import IndicatorsAbout from './components/IndicatorsAbout.svelte';
+  import BacktestPanel from './components/BacktestPanel.svelte';
   import ReviewExport from './components/ReviewExport.svelte';
   import { getDb, getVersion } from './lib/duckdb';
   import { refreshState, dataState } from './lib/data.svelte';
@@ -196,6 +197,7 @@
         <a href="#witnesses">Witnesses</a>
         <a href="#chart">Chart</a>
         <a href="#indicators">Indicators</a>
+        <a href="#backtest">Backtest</a>
         <a href="#review">Review</a>
       {/if}
       <a href="#positions">Positions</a>
@@ -259,6 +261,10 @@
         {#if chartPrefs.showRsiPane && chartPrefs.timeframe !== '1D'}<RsiPanel />{/if}
         {#if chartPrefs.showMacdPane && chartPrefs.timeframe !== '1D'}<MacdPanel />{/if}
         <IndicatorsAbout />
+      </section>
+
+      <section class="container wide stack" id="backtest">
+        <BacktestPanel />
       </section>
 
       <section class="container narrow stack" id="review">

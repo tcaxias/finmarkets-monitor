@@ -7,6 +7,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Per-ticker Backtest panel** — historical conviction chart + three
+  predefined example backtest queries. Lives in per-ticker view between
+  the indicators (RSI/MACD) and ReviewExport. Section A renders the
+  witness verdict over the last 250 daily bars as a Lightweight Charts
+  step-line on a −2..+2 axis (high-bullish=2, neutral=0, high-bearish=−2),
+  with a stats strip showing % time bullish/bearish/neutral and the count
+  of regime transitions. Section B exposes three one-click SQL backtests
+  against the user's own OHLCV + materialised indicator history:
+  *Bullish Fridays in 2025* (RSI > 50 + close > 20-MA on Fridays),
+  *Best 30-day rolling windows* (top 10 by close-to-close return,
+  using `LAG(_, 30)` for the rolling baseline), and *RSI extremes →
+  10-day forward return* (mean-reversion check via a self-JOIN by
+  `ROW_NUMBER` offset of 10). New `src/lib/backtest.ts` owns the
+  `BACKTEST_QUERIES` catalog, the `runBacktest` executor, and the
+  `computeHistoricalConviction` helper (a JS loop over the existing
+  pure witness functions for each historical bar — keeps witnesses.ts
+  as the single source of truth for "what is bullish"). New
+  `src/components/BacktestPanel.svelte` renders both sections with the
+  same trigger-grid + results-table idiom as ScreenerPanel for visual
+  parity. 30 new tests pin each query's SQL shape, the
+  CONVICTION_NUMERIC mapping, and conviction transitions on synthetic
+  series via the extracted-pure `computeConvictionSeries` helper.
 - **Cross-ticker Screener panel** — six predefined SQL screens grouped
   into Momentum (Overbought RSI > 70, Oversold RSI < 30, MACD bullish
   crossover in the last 5 days), Trend (below 20-day SMA, above 200-day
