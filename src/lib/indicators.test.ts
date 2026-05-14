@@ -1,112 +1,26 @@
-// Smoke tests for the indicator wrappers. These don't exercise DuckDB —
-// they validate that our adapters around `technicalindicators` produce
-// sensible numbers for inputs with known analytic limits.
+// Tests for the pure parts of indicators.ts.
 //
-// Reference behaviour:
-//   - RSI of monotonically rising closes → 100
-//   - RSI of monotonically falling closes → 0
-//   - RSI of constant closes → no output (avg gain == avg loss == 0;
-//     library skips the warmup and returns nothing meaningful)
-//   - MACD of constant closes → MACD/signal/hist all 0
-//   - Divergence detector: bearish on a higher high + lower RSI high
+// History: this file used to also test `computeRsi` / `computeMacd`
+// against the `technicalindicators` npm package. Those wrappers were
+// removed in the migration-v3 commit (RSI/MACD now compute in DuckDB
+// SQL via recursive CTEs — see `sqlIndicators.ts`). Testing the SQL
+// implementations would require booting DuckDB-WASM in the vitest
+// runner, which doesn't have a worker or OPFS. We rely on manual
+// post-deploy verification (compare a few RSI/MACD values against the
+// prior deployment) for SQL-implementation parity.
+//
+// What's left here: the `detectRsiDivergence` test suite. It's a pure
+// function over already-computed RsiPoint and ClosePoint arrays, so
+// it tests cleanly without any database dependency.
 //
 // We use Vitest because Vite already powers the build pipeline.
 
 import { describe, it, expect } from 'vitest';
 import {
-  computeRsi,
-  computeMacd,
   detectRsiDivergence,
   type ClosePoint,
   type RsiPoint,
 } from './indicators';
-
-function makeCloses(values: number[], startTime = 1_700_000_000): ClosePoint[] {
-  // 86400 = one day in seconds; arbitrary but realistic spacing.
-  return values.map((close, i) => ({ time: startTime + i * 86_400, close }));
-}
-
-describe('computeRsi', () => {
-  it('returns RSI ~100 for monotonically rising closes', () => {
-    const closes = makeCloses(Array.from({ length: 30 }, (_, i) => i + 1));
-    const rsi = computeRsi(closes, 14);
-    expect(rsi.length).toBeGreaterThan(0);
-    const last = rsi[rsi.length - 1].value;
-    expect(last).toBeGreaterThan(99.9);
-    expect(last).toBeLessThanOrEqual(100);
-  });
-
-  it('returns RSI ~0 for monotonically falling closes', () => {
-    const closes = makeCloses(Array.from({ length: 30 }, (_, i) => 100 - i));
-    const rsi = computeRsi(closes, 14);
-    expect(rsi.length).toBeGreaterThan(0);
-    const last = rsi[rsi.length - 1].value;
-    expect(last).toBeGreaterThanOrEqual(0);
-    expect(last).toBeLessThan(0.1);
-  });
-
-  it('handles constant closes without crashing', () => {
-    // With zero gains AND zero losses the library returns NaN/undefined,
-    // which our wrapper filters out. The contract is "no crash"; an empty
-    // result is acceptable.
-    const closes = makeCloses(new Array(30).fill(50));
-    const rsi = computeRsi(closes, 14);
-    // Either empty or every entry finite — neither crashes the chart.
-    for (const p of rsi) {
-      expect(Number.isFinite(p.value)).toBe(true);
-    }
-  });
-
-  it('returns empty when input is shorter than the warmup window', () => {
-    const closes = makeCloses([1, 2, 3, 4, 5]);
-    expect(computeRsi(closes, 14)).toEqual([]);
-  });
-
-  it('aligns RSI timestamps to the closes they were computed from', () => {
-    const closes = makeCloses(Array.from({ length: 30 }, (_, i) => i + 1));
-    const rsi = computeRsi(closes, 14);
-    // Every RSI timestamp must exist in the input closes; the last RSI
-    // timestamp must equal the last close timestamp.
-    const closeTimes = new Set(closes.map((c) => c.time));
-    for (const p of rsi) expect(closeTimes.has(p.time)).toBe(true);
-    expect(rsi[rsi.length - 1].time).toBe(closes[closes.length - 1].time);
-  });
-});
-
-describe('computeMacd', () => {
-  it('returns all-zero MACD/signal/histogram for constant closes', () => {
-    const closes = makeCloses(new Array(60).fill(100));
-    const macd = computeMacd(closes, 12, 26, 9);
-    expect(macd.length).toBeGreaterThan(0);
-    for (const p of macd) {
-      expect(Math.abs(p.macd)).toBeLessThan(1e-9);
-      expect(Math.abs(p.signal)).toBeLessThan(1e-9);
-      expect(Math.abs(p.histogram)).toBeLessThan(1e-9);
-    }
-  });
-
-  it('returns positive MACD for steadily rising closes', () => {
-    const closes = makeCloses(Array.from({ length: 80 }, (_, i) => 100 + i));
-    const macd = computeMacd(closes, 12, 26, 9);
-    expect(macd.length).toBeGreaterThan(0);
-    const last = macd[macd.length - 1];
-    // Fast EMA leads slow EMA upward → MACD line is positive.
-    expect(last.macd).toBeGreaterThan(0);
-  });
-
-  it('returns negative MACD for steadily falling closes', () => {
-    const closes = makeCloses(Array.from({ length: 80 }, (_, i) => 200 - i));
-    const macd = computeMacd(closes, 12, 26, 9);
-    expect(macd.length).toBeGreaterThan(0);
-    const last = macd[macd.length - 1];
-    expect(last.macd).toBeLessThan(0);
-  });
-
-  it('returns empty when input is shorter than the warmup window', () => {
-    const closes = makeCloses(Array.from({ length: 20 }, (_, i) => i));
-    expect(computeMacd(closes, 12, 26, 9)).toEqual([]);
-  });
-});
 
 describe('detectRsiDivergence', () => {
   it('flags bearish divergence: higher price high + lower RSI high', () => {

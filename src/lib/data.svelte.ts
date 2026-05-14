@@ -10,6 +10,7 @@
 
 import { settings } from './settings.svelte';
 import { ensureSchema, getConn, resetSchemaMemo } from './duckdb';
+import { refreshIndicators } from './sqlIndicators';
 import {
   fetchDailyOhlcv,
   fetchIntradayOhlcv,
@@ -109,6 +110,19 @@ export async function refreshData(tickerArg?: string): Promise<boolean> {
       await logFetch(ticker, rowsInserted, status);
     } catch (logErr) {
       console.warn('Failed to write fetch_log (non-fatal):', logErr);
+    }
+    // Recompute the materialised RSI/MACD tables for this ticker. Wrapped
+    // in try/catch as best-effort: the chart can still render OHLCV +
+    // SMA without indicators (the indicator panes simply show empty
+    // until the next successful refresh). A failure here MUST NOT mask
+    // the success of the data fetch — the caller's `ok = true` follows.
+    try {
+      await refreshIndicators(ticker);
+    } catch (indErr) {
+      console.warn(
+        'Indicator refresh failed (non-fatal — chart will still render OHLCV):',
+        indErr,
+      );
     }
     await refreshState(ticker);
     ok = true;

@@ -7,6 +7,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **RSI(14) and MACD(12,26,9) computed in DuckDB SQL** via recursive
+  CTEs and materialised into new `indicators_rsi` and `indicators_macd`
+  tables (migration v3). New `src/lib/sqlIndicators.ts` owns the write
+  side (`materializeRsi`, `materializeMacd`, `refreshIndicators`) and
+  the read side (`readRsi`, `readMacd`). The data layer
+  (`refreshData`) calls `refreshIndicators` after every successful
+  OHLCV insert so subsequent chart renders are indexed reads, not
+  per-render recomputations. The chart consumer (`evaluation.svelte.ts`)
+  now reads from the materialised tables instead of computing on the fly.
 - **Schema migrations infrastructure** — new `src/lib/migrations.ts`
   with versioned, append-only migrations recorded in a `_meta` table.
   `ensureSchema()` now delegates to `runMigrations()` instead of
@@ -63,6 +72,36 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   instead of returning the prior in-flight slice. `PerTickerEval`
   carries `timeframe` and `isIntraday` so consumers can detect the
   cache state without re-reading prefs.
+- **`indicators.ts`** — trimmed to type definitions
+  (`RsiPoint`, `MacdPoint`, `ClosePoint`, `DivergenceFlag`) plus the
+  pure `detectRsiDivergence` function. The previous JS-side
+  `computeRsi` / `computeMacd` / `getRsi` / `getMacd` / `getCloses`
+  wrappers around the `technicalindicators` npm package are removed —
+  the math now lives in `sqlIndicators.ts` (DuckDB SQL recursive CTEs)
+  and the read API is `readRsi` / `readMacd` against the materialised
+  tables. Indicator-pane consumers (`evaluation.svelte.ts`) read from
+  the new API; `sundayReview.ts` keeps using the divergence detector
+  unchanged.
+
+### Removed
+
+- **`technicalindicators` npm dependency** — replaced by native DuckDB
+  SQL recursive CTEs (see migration v3 + `sqlIndicators.ts`). Removed
+  from `package.json`, `NOTICE`, and the `README.md` License table.
+  9 unit tests that exercised the JS wrapper outputs are removed; the
+  4 divergence tests (pure-function, no DuckDB) are retained.
+
+### Risks (manual verification needed post-deploy)
+
+- **SQL parity with the npm implementation is mathematically faithful**
+  to Wilder's RSI smoothing and Appel's MACD chained EMAs but is
+  unverified at build time — the vitest harness can't boot DuckDB-WASM
+  (no worker, no OPFS). Compare a few RSI/MACD values from a live
+  ticker against the prior deployment before trusting the new path.
+- **Existing OPFS users will see empty RSI/MACD until the first
+  refresh after upgrade.** Migration v3 creates the indicator tables
+  but leaves them empty for already-stored OHLCV data; the next
+  successful `refreshData` call populates them.
 
 ### Fixed (Phase A/B review findings)
 

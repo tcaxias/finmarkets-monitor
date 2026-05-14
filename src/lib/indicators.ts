@@ -1,19 +1,19 @@
-// Technical indicators (RSI, MACD) and basic divergence detection.
+// Indicator series types and the (pure) RSI/price divergence detector.
 //
-// We use the `technicalindicators` npm package for RSI and MACD instead of
-// computing them in DuckDB SQL. Wilder's RSI smoothing and MACD's chained
-// EMAs are recursive: each bar's value depends on the previous bar's
-// computed value, which is awkward to express as a window function and
-// requires either a recursive CTE (with edge-case behaviour in DuckDB-WASM)
-// or hand-rolled SQL that's very easy to get subtly wrong. A vetted
-// library that matches TradingView outputs is the safer call.
+// History: this file used to wrap the `technicalindicators` npm package
+// for RSI/MACD computation. As of migration v3 those indicators are
+// computed in pure DuckDB SQL (recursive CTEs) and materialised into
+// the `indicators_rsi` / `indicators_macd` tables — see
+// `sqlIndicators.ts` for the write side (`materializeRsi`,
+// `materializeMacd`, `refreshIndicators`) and the read side (`readRsi`,
+// `readMacd`).
 //
-// SMA, volume aggregation, and threshold queries remain in DuckDB SQL
-// (see `queries.ts`) — those are simple windows and benefit from running
-// close to the data.
-
-import { RSI, MACD } from 'technicalindicators';
-import { getConn } from './duckdb';
+// What stayed here:
+//   - The point types (`RsiPoint`, `MacdPoint`, `ClosePoint`,
+//     `DivergenceFlag`) so existing imports don't churn.
+//   - `detectRsiDivergence`, which is a pure function over already-
+//     computed RSI + close arrays. It needs no DuckDB and tests cleanly
+//     in the vitest harness without a worker.
 
 export interface RsiPoint {
   time: number; // unix seconds
@@ -30,147 +30,6 @@ export interface MacdPoint {
 export interface ClosePoint {
   time: number;
   close: number;
-}
-
-// Coerce DuckDB BIGINT (BigInt) and DOUBLE (Number) scalars to plain Number.
-// Lightweight Charts and the indicator library both choke on BigInt.
-function toNum(v: unknown): number {
-  if (typeof v === 'bigint') return Number(v);
-  if (typeof v === 'number') return v;
-  return Number(v);
-}
-
-/**
- * Pull (time, close) pairs for `ticker` ordered by date. Shared input for
- * both RSI and MACD so we don't double-query.
- *
- * `asOf` clamps the upper bound; `since` clamps the lower bound. Note
- * that for RSI/MACD the indicator math NEEDS warmup history — callers
- * that pass `since` are accepting that the indicator output will start
- * later than `since` (the warmup eats the first ~15-35 bars). For an
- * "indicator that begins exactly at `since`" you'd need to fetch with
- * a wider window and clip post-compute. We don't do that here because
- * timeframe filters in this app run against a chart that only renders
- * the requested range — a missing leading slice is the desired UX.
- */
-export async function getCloses(
-  ticker: string,
-  asOf?: string | null,
-  since?: string | null,
-): Promise<ClosePoint[]> {
-  const conn = await getConn();
-  // See queries.ts for the rationale on CAST(? AS DATE) — same DuckDB
-  // bind-type quirk applies here.
-  let clause = `WHERE ticker = ?`;
-  const params: unknown[] = [ticker];
-  if (since) {
-    clause += ` AND dt >= CAST(? AS DATE)`;
-    params.push(since);
-  }
-  if (asOf) {
-    clause += ` AND dt <= CAST(? AS DATE)`;
-    params.push(asOf);
-  }
-  const sql = `SELECT epoch(dt)::BIGINT AS time, close
-       FROM ohlcv
-       ${clause}
-       ORDER BY dt`;
-  const stmt = await conn.prepare(sql);
-  try {
-    const tbl = await stmt.query(...params);
-    return tbl.toArray().map((row) => {
-      const r = row.toJSON() as Record<string, unknown>;
-      return { time: toNum(r.time), close: toNum(r.close) };
-    });
-  } finally {
-    await stmt.close();
-  }
-}
-
-/**
- * RSI(period) using Wilder's smoothing (the library's default).
- *
- * The library returns `closes.length - period` values (it skips the warmup
- * window). We align each output to the close it was computed from by
- * applying `offset = closes.length - result.length` as the index shift.
- */
-export function computeRsi(closes: ClosePoint[], period = 14): RsiPoint[] {
-  if (closes.length <= period) return [];
-  const values = closes.map((c) => c.close);
-  const result = RSI.calculate({ values, period });
-  const offset = closes.length - result.length;
-  const out: RsiPoint[] = [];
-  for (let i = 0; i < result.length; i++) {
-    const v = result[i];
-    if (typeof v !== 'number' || !Number.isFinite(v)) continue;
-    out.push({ time: closes[i + offset].time, value: v });
-  }
-  return out;
-}
-
-export async function getRsi(
-  ticker: string,
-  period = 14,
-  asOf?: string | null,
-  since?: string | null,
-): Promise<RsiPoint[]> {
-  const closes = await getCloses(ticker, asOf, since);
-  return computeRsi(closes, period);
-}
-
-/**
- * MACD(fast, slow, signal). `slow` is the dominant warmup window; the
- * library's output is shorter than the input by approximately
- * (slow + signal - 2) bars.
- */
-export function computeMacd(
-  closes: ClosePoint[],
-  fast = 12,
-  slow = 26,
-  signal = 9,
-): MacdPoint[] {
-  if (closes.length <= slow + signal) return [];
-  const values = closes.map((c) => c.close);
-  const result = MACD.calculate({
-    values,
-    fastPeriod: fast,
-    slowPeriod: slow,
-    signalPeriod: signal,
-    SimpleMAOscillator: false,
-    SimpleMASignal: false,
-  });
-  const offset = closes.length - result.length;
-  const out: MacdPoint[] = [];
-  for (let i = 0; i < result.length; i++) {
-    const r = result[i];
-    // The library only sets a key when its value is truthy (its codegen
-    // skips zero/undefined), so on flat or warmup bars `signal` and
-    // `histogram` may be missing even when MACD itself has a value.
-    // Wait until the MACD line itself is defined — that's the signal that
-    // both EMAs have warmed up. Treat missing signal/histogram as 0 so
-    // the chart shows the typical "flat through the signal warmup, then
-    // diverges" shape rather than a gap.
-    if (typeof r.MACD !== 'number') continue;
-    out.push({
-      time: closes[i + offset].time,
-      macd: r.MACD,
-      signal: typeof r.signal === 'number' ? r.signal : 0,
-      histogram: typeof r.histogram === 'number' ? r.histogram : 0,
-    });
-  }
-  return out;
-}
-
-export async function getMacd(
-  ticker: string,
-  fast = 12,
-  slow = 26,
-  signal = 9,
-  asOf?: string | null,
-  since?: string | null,
-): Promise<MacdPoint[]> {
-  const closes = await getCloses(ticker, asOf, since);
-  return computeMacd(closes, fast, slow, signal);
 }
 
 // ---------- Divergence detection ----------

@@ -113,6 +113,58 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 3,
+    description:
+      'Materialised RSI(14) and MACD(12,26,9) tables (computed in DuckDB SQL via recursive CTEs)',
+    up: async (conn) => {
+      // Why materialise instead of compute-on-read?
+      // RSI/MACD are recursive (each bar depends on the previous bar's
+      // smoothed value). DuckDB can express that as a recursive CTE, but
+      // re-running it on every chart redraw is wasteful: the inputs only
+      // change when new OHLCV rows are inserted. Materialising lets the
+      // chart path become a pure indexed read of (ticker, dt) — tens of
+      // microseconds instead of tens of milliseconds.
+      //
+      // Refresh policy is "rebuild on data change": after a successful
+      // OHLCV insert, the data layer calls `refreshIndicators(ticker)`
+      // (see sqlIndicators.ts) which DELETEs the prior rows for that
+      // ticker and INSERTs the freshly-computed series. Cheap because
+      // it's bounded to one ticker; correct because there's no
+      // partial-update window where stale tail rows could leak.
+      //
+      // Schema notes:
+      // - `period` (RSI) and `(fast_period, slow_period, signal_period)`
+      //   (MACD) are part of the primary key so multiple period sets
+      //   could coexist if we ever add e.g. RSI(7) for short-term work.
+      // - macd_line / signal_line / histogram are NULLable because in
+      //   principle a degenerate input (constant closes) yields zero
+      //   for all three; we still write the row so the chart pane has
+      //   a continuous time axis.
+      await conn.query(`
+        CREATE TABLE IF NOT EXISTS indicators_rsi (
+          ticker VARCHAR NOT NULL,
+          dt DATE NOT NULL,
+          period INTEGER NOT NULL,
+          value DOUBLE NOT NULL,
+          PRIMARY KEY (ticker, dt, period)
+        );
+      `);
+      await conn.query(`
+        CREATE TABLE IF NOT EXISTS indicators_macd (
+          ticker VARCHAR NOT NULL,
+          dt DATE NOT NULL,
+          fast_period INTEGER NOT NULL,
+          slow_period INTEGER NOT NULL,
+          signal_period INTEGER NOT NULL,
+          macd_line DOUBLE,
+          signal_line DOUBLE,
+          histogram DOUBLE,
+          PRIMARY KEY (ticker, dt, fast_period, slow_period, signal_period)
+        );
+      `);
+    },
+  },
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;

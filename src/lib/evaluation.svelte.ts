@@ -38,15 +38,13 @@ import {
   type VolumeBar,
 } from './queries';
 import {
-  getCloses,
-  computeRsi,
-  computeMacd,
   detectRsiDivergence,
   type RsiPoint,
   type MacdPoint,
   type ClosePoint,
   type DivergenceFlag,
 } from './indicators';
+import { readRsi, readMacd } from './sqlIndicators';
 import {
   evaluateTrend,
   evaluateVolume,
@@ -250,18 +248,22 @@ export async function recomputeOne(ticker: string): Promise<void> {
       // based, not relative-to-the-historical-snapshot).
       const since = timeframeSince(timeframe, new Date());
 
-      const [candles, sma20, sma50, sma200, volume, closes] = await Promise.all([
-        getCandles(t, asOf, since),
-        getSma(t, 20, asOf, since),
-        getSma(t, 50, asOf, since),
-        getSma(t, 200, asOf, since),
-        getVolumeBars(t, asOf, since),
-        // Closes are pulled WITHOUT `since` so RSI/MACD have warmup
-        // history; the resulting indicator series naturally starts
-        // earlier than `since` in some cases — the chart's time scale
-        // clips the visible range either way.
-        getCloses(t, asOf),
-      ]);
+      const [candles, sma20, sma50, sma200, volume, rsiFull, macdFull] =
+        await Promise.all([
+          getCandles(t, asOf, since),
+          getSma(t, 20, asOf, since),
+          getSma(t, 50, asOf, since),
+          getSma(t, 200, asOf, since),
+          getVolumeBars(t, asOf, since),
+          // Indicators are read from the materialised tables
+          // (indicators_rsi / indicators_macd, populated by
+          // refreshIndicators after every OHLCV insert — see
+          // sqlIndicators.ts and migration v3). We pass `since = null`
+          // so we get the full warmup history; the post-clipping below
+          // bounds the visible range.
+          readRsi(t, asOf, null, 14),
+          readMacd(t, asOf, null),
+        ]);
 
       if (candles.length === 0) {
         // Empty out — keeps existing consumers' "no data" placeholders honest.
@@ -284,17 +286,28 @@ export async function recomputeOne(ticker: string): Promise<void> {
         return;
       }
 
-      // Compute indicators on the FULL close history so warmup is
-      // intact (Wilder's RSI / EMA chains in MACD need ~200 bars before
-      // the values stabilise).
-      const rsiFull = computeRsi(closes, 14);
-      const macdFull = computeMacd(closes, 12, 26, 9);
+      // Derive `closes` from `candles` so detectRsiDivergence has the
+      // (time, close) shape it expects. With this change `closes` is
+      // also clipped to `since` — divergence-detection now operates on
+      // the visible window. The lookback=30 default still applies, so
+      // for the common 1Y+ timeframes this is identical to the previous
+      // "full history" behaviour; only sub-30-bar windows see a
+      // difference, and there the new behaviour ("divergence within the
+      // visible window") is more intuitive than the old behaviour
+      // ("divergence somewhere in your account history").
+      const closes: ClosePoint[] = candles.map((c) => ({
+        time: c.time,
+        close: c.close,
+      }));
 
-      // Witness conviction + divergence detection use the FULL series so
-      // the verdict reflects current momentum (the doc-defined "is the
-      // recent trend bullish/bearish" question, not "as-of timeframe
-      // window"). detectRsiDivergence only inspects the most recent N
-      // bars internally so this is correct.
+      // Indicators (rsiFull, macdFull) were read from the materialised
+      // tables above with the full warmup history intact (`since = null`
+      // on the readRsi/readMacd calls). Witness conviction +
+      // divergence detection use the FULL series so the verdict
+      // reflects current momentum (the doc-defined "is the recent trend
+      // bullish/bearish" question, not "as-of timeframe window").
+      // detectRsiDivergence only inspects the most recent N bars
+      // internally so this is correct.
       const trend = evaluateTrend(candles, sma20, sma200);
       const vol = evaluateVolume(candles, volume);
       const ind = evaluateIndicators(rsiFull, macdFull);

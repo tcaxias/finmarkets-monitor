@@ -7,8 +7,9 @@ exit framework. Generic — works with any single equity ticker supported by Twe
 
 - Svelte 5 + TypeScript + Vite
 - DuckDB-WASM (OPFS persistence) for storage and analytics
+  (RSI/MACD computed in DuckDB SQL via recursive CTEs and materialised
+  into `indicators_rsi` / `indicators_macd` tables)
 - Lightweight Charts (TradingView OSS) for visualization
-- technicalindicators (npm) for RSI/MACD math
 - Twelve Data API for OHLCV (free tier, 800 req/day)
 
 ## Setup
@@ -114,7 +115,6 @@ dual-license terms. Full attribution lives in [NOTICE](./NOTICE).
 | [FlatBuffers](https://github.com/google/flatbuffers)                          | Apache-2.0   | Serialization (transitive of DuckDB)                  |
 | [Lightweight Charts](https://github.com/tradingview/lightweight-charts)       | Apache-2.0   | Chart rendering — © TradingView, Inc.                 |
 | [Svelte](https://github.com/sveltejs/svelte)                                  | MIT          | UI framework                                          |
-| [technicalindicators](https://github.com/anandanand84/technicalindicators)    | MIT          | RSI / MACD / EMA computations                         |
 | [tslib](https://github.com/microsoft/tslib)                                   | 0BSD         | TypeScript runtime helpers (transitive)               |
 | [qs](https://github.com/ljharb/qs)                                            | BSD-3-Clause | Query-string parsing (transitive)                     |
 
