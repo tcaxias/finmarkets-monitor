@@ -219,6 +219,20 @@ async function applyMigrations(fixture: FixtureDb): Promise<void> {
   // (the LEFT JOIN finds zero tickers needing backfill), but the SQL
   // parse path runs. Tests that want indicator data populate it via
   // `materializeRsiSql` / `materializeMacdSql` below.
+
+  // v6 — earnings_events table (per-ticker EPS history with surprise %).
+  await fixture.query(`
+    CREATE TABLE IF NOT EXISTS earnings_events (
+      ticker VARCHAR NOT NULL,
+      dt DATE NOT NULL,
+      time_of_day VARCHAR,
+      eps_estimate DOUBLE,
+      eps_actual DOUBLE,
+      surprise_pct DOUBLE,
+      fetched_at TIMESTAMP NOT NULL,
+      PRIMARY KEY (ticker, dt)
+    )
+  `);
 }
 
 /**

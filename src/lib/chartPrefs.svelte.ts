@@ -27,6 +27,8 @@ export interface ChartPrefs {
   showVestLine: boolean;
   showRsiPane: boolean;
   showMacdPane: boolean;
+  /** Earnings event markers above the price bars. Default on. */
+  showEarnings: boolean;
 }
 
 const DEFAULTS: ChartPrefs = {
@@ -43,6 +45,10 @@ const DEFAULTS: ChartPrefs = {
   showVestLine: true,
   showRsiPane: true,
   showMacdPane: true,
+  // Earnings markers default ON — they're high-signal annotations
+  // (gap moves the day after earnings tend to set the next regime)
+  // and small enough that they don't clutter the chart at any zoom.
+  showEarnings: true,
 };
 
 const STORAGE_KEY = 'finmarkets-monitor:chartPrefs';
@@ -82,6 +88,7 @@ function loadFromStorage(): ChartPrefs {
       'showVestLine',
       'showRsiPane',
       'showMacdPane',
+      'showEarnings',
     ] as const) {
       if (typeof obj[key] === 'boolean') {
         out[key] = obj[key] as boolean;

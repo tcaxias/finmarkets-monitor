@@ -24,6 +24,7 @@
   import PositionsPanel from './components/PositionsPanel.svelte';
   import DataPanel from './components/DataPanel.svelte';
   import WitnessPanel from './components/WitnessPanel.svelte';
+  import EarningsWidget from './components/EarningsWidget.svelte';
   import ChartToolbar from './components/ChartToolbar.svelte';
   import ChartPanel from './components/ChartPanel.svelte';
   import RsiPanel from './components/RsiPanel.svelte';
@@ -197,6 +198,7 @@
       {/if}
       {#if activePosition}
         <a href="#witnesses">Witnesses</a>
+        <a href="#earnings">Earnings</a>
         <a href="#chart">Chart</a>
         <a href="#indicators">Indicators</a>
         <a href="#backtest">Backtest</a>
@@ -250,6 +252,16 @@
     {:else}
       <section class="container narrow stack" id="witnesses">
         <WitnessPanel />
+      </section>
+
+      <!-- Earnings widget sits between witnesses and chart so the
+           four most-recent EPS surprises are visible at a glance
+           before the user looks at the chart markers. Renders nothing
+           when there are no earnings rows for this ticker (avoids an
+           empty panel for tickers with no Twelve Data /earnings
+           coverage), so it doesn't need its own wrapper guard here. -->
+      <section class="container narrow stack" id="earnings">
+        <EarningsWidget />
       </section>
 
       <section class="container wide stack" id="chart">

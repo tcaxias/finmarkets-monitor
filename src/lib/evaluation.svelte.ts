@@ -29,12 +29,14 @@ import { viewState } from './viewState.svelte';
 import { chartPrefs, timeframeSince, type Timeframe } from './chartPrefs.svelte';
 import {
   getCandles,
+  getEarnings,
   getSma,
   getVwap,
   getVolumeBars,
   getIntradayCandles,
   getIntradayVolumeBars,
   type Candle,
+  type EarningsEventRow,
   type MaPoint,
   type VolumeBar,
   type VwapPoint,
@@ -86,6 +88,13 @@ export interface PerTickerEval {
   timeframe: Timeframe;
   /** True when this slice came from the intraday table (timeframe='1D'). */
   isIntraday: boolean;
+  /**
+   * Earnings events visible in the current window (asOf-bounded above
+   * and since-bounded below in daily mode). Empty in intraday mode —
+   * earnings are a daily-bars annotation; rendering them on a 5-minute
+   * intraday view would be visual noise without information value.
+   */
+  earnings: EarningsEventRow[];
 }
 
 export interface EvalState {
@@ -117,6 +126,7 @@ function emptySlice(): PerTickerEval {
     asOfDate: null,
     timeframe: '1Y',
     isIntraday: false,
+    earnings: [],
   };
 }
 
@@ -240,6 +250,10 @@ export async function recomputeOne(ticker: string): Promise<void> {
         // momentary live look. If we wanted strict consistency we'd
         // null it; trading off in favour of stable banner UI.
         slice.divergence = null;
+        // Earnings markers don't apply to intraday — they're a daily-
+        // chart annotation (one circle per release date). Rendering
+        // them on a 5min view would just clutter the price action.
+        slice.earnings = [];
         slice.latestClose = candles.length > 0 ? candles[candles.length - 1].close : null;
         slice.prevClose =
           candles.length >= 2 ? candles[candles.length - 2].close : null;
@@ -255,7 +269,7 @@ export async function recomputeOne(ticker: string): Promise<void> {
       // based, not relative-to-the-historical-snapshot).
       const since = timeframeSince(timeframe, new Date());
 
-      const [candles, sma20, sma50, sma200, volume, vwap, rsiFull, macdFull] =
+      const [candles, sma20, sma50, sma200, volume, vwap, rsiFull, macdFull, earnings] =
         await Promise.all([
           getCandles(t, asOf, since),
           getSma(t, 20, asOf, since),
@@ -274,6 +288,10 @@ export async function recomputeOne(ticker: string): Promise<void> {
           // bounds the visible range.
           readRsi(t, asOf, null, 14),
           readMacd(t, asOf, null),
+          // Earnings markers — windowed to the visible chart range so
+          // a 1M view doesn't render a marker for an earnings release
+          // from 18 months ago that's invisible off-screen anyway.
+          getEarnings(t, asOf, since),
         ]);
 
       if (candles.length === 0) {
@@ -289,6 +307,7 @@ export async function recomputeOne(ticker: string): Promise<void> {
         slice.closes = [];
         slice.summary = null;
         slice.divergence = null;
+        slice.earnings = [];
         slice.latestClose = null;
         slice.prevClose = null;
         slice.asOfDate = asOf;
@@ -351,6 +370,7 @@ export async function recomputeOne(ticker: string): Promise<void> {
       slice.closes = closes;
       slice.summary = summary;
       slice.divergence = divergence;
+      slice.earnings = earnings;
       slice.latestClose = candles[candles.length - 1].close;
       slice.prevClose =
         candles.length >= 2 ? candles[candles.length - 2].close : null;

@@ -17,6 +17,7 @@
     'sma50',
     'sma200',
     'vwap',
+    'earnings',
     'rsi',
     'macd',
     'pcover',

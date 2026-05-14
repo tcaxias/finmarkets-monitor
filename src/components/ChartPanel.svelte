@@ -17,6 +17,7 @@
   // on the time scale so HH:MM is rendered alongside the date.
   import {
     createChart,
+    createSeriesMarkers,
     CandlestickSeries,
     HistogramSeries,
     LineSeries,
@@ -24,7 +25,10 @@
     CrosshairMode,
     type IChartApi,
     type ISeriesApi,
+    type ISeriesMarkersPluginApi,
     type IPriceLine,
+    type SeriesMarker,
+    type Time,
     type UTCTimestamp,
     type CandlestickData,
     type LineData,
@@ -58,6 +62,11 @@
   let sma200Series: ISeriesApi<'Line'> | undefined;
   let vwapSeries: ISeriesApi<'Line'> | undefined;
   let volumeSeries: ISeriesApi<'Histogram'> | undefined;
+  // Lightweight Charts v5 exposes markers via the createSeriesMarkers
+  // PLUGIN — the v4 `series.setMarkers([])` shorthand was removed. We
+  // hold the plugin handle so the prefs effect can update or clear
+  // markers without rebuilding the candle series.
+  let earningsMarkers: ISeriesMarkersPluginApi<Time> | undefined;
   let priceLines: IPriceLine[] = [];
   let resizeObserver: ResizeObserver | undefined;
 
@@ -94,6 +103,14 @@
     pcover: '#ef5350',
     pcoverPlus: '#f59e0b',
     breakeven: '#9ca3af',
+    // Earnings marker palette — green/red signal positive/negative
+    // EPS surprise, gray = no surprise data on the wire (estimate or
+    // actual was missing). Same green/red as the up/down candle wicks
+    // so the user's color memory works without re-learning a new
+    // palette for the markers.
+    earningsPositive: '#22c55e',
+    earningsNegative: '#ef5350',
+    earningsNeutral: '#9ca3af',
   };
 
   function buildChart(container: HTMLDivElement): void {
@@ -196,6 +213,44 @@
     }
   }
 
+  /**
+   * Apply the current earnings array to the candle series via the
+   * markers plugin. Idempotent — creates the plugin handle on first
+   * call, replaces the marker set on subsequent calls. Pass an empty
+   * array to clear (the plugin stays attached but emits nothing).
+   *
+   * Earnings is daily-only; the slice's earnings array is empty in
+   * intraday mode so the markers naturally clear on a 1D switch.
+   */
+  function applyEarningsMarkers(): void {
+    if (!candleSeries) return;
+    const showEarnings = chartPrefs.showEarnings;
+    const isIntraday = slice?.isIntraday ?? false;
+    const events = !showEarnings || isIntraday ? [] : (slice?.earnings ?? []);
+    const markers: SeriesMarker<Time>[] = events.map((e) => ({
+      time: e.time as UTCTimestamp,
+      position: 'aboveBar' as const,
+      color:
+        e.surprisePct == null
+          ? COLORS.earningsNeutral
+          : e.surprisePct > 0
+            ? COLORS.earningsPositive
+            : e.surprisePct < 0
+              ? COLORS.earningsNegative
+              : COLORS.earningsNeutral,
+      shape: 'circle' as const,
+      // Single character — the chart marker plugin renders text inside
+      // the shape. Keep it minimal so the markers don't overlap on
+      // back-to-back quarterly releases at zoomed-out scales.
+      text: 'E',
+    }));
+    if (!earningsMarkers) {
+      earningsMarkers = createSeriesMarkers(candleSeries, markers);
+    } else {
+      earningsMarkers.setMarkers(markers);
+    }
+  }
+
   function ensureVolume(): void {
     if (!chart || volumeSeries) return;
     volumeSeries = chart.addSeries(HistogramSeries, {
@@ -235,6 +290,9 @@
       sma200Series?.setData([]);
       vwapSeries?.setData([]);
       volumeSeries?.setData([]);
+      // Clear any leftover markers from a previously-rendered slice
+      // so an empty-data state doesn't dangle stale earnings circles.
+      earningsMarkers?.setMarkers([]);
       return;
     }
 
@@ -270,6 +328,11 @@
           .map((v) => ({ ...v, time: v.time as UTCTimestamp })) as HistogramData[],
       );
     }
+
+    // Earnings markers ride on top of the candle series (no separate
+    // series). Refresh them every render so a slice generation bump
+    // (new earnings landing from /earnings refresh) propagates.
+    applyEarningsMarkers();
 
     // Toggle the time-scale's HH:MM visibility based on bar size — only
     // intraday slices need it. Doing it here (after data is set) keeps
@@ -350,6 +413,9 @@
     void chartPrefs.showSma200;
     void chartPrefs.showVwap;
     void chartPrefs.showVolume;
+    // Earnings markers — toggling this just changes which markers
+    // render against the existing candle series; no series lifecycle.
+    void chartPrefs.showEarnings;
 
     if (chartPrefs.showSma20 && !isIntraday) ensureSma20();
     else dropSma20();
@@ -416,6 +482,11 @@
       sma200Series = undefined;
       vwapSeries = undefined;
       volumeSeries = undefined;
+      // The markers plugin attaches to the candle series — chart.remove()
+      // tears down the series and the plugin with it, but null the
+      // handle so a remount doesn't try to call setMarkers on a stale
+      // reference attached to a now-disposed series.
+      earningsMarkers = undefined;
     };
   });
 

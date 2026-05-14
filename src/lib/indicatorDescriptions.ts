@@ -63,6 +63,11 @@ export const INDICATOR_DESCRIPTIONS = {
     description:
       'Your RSU vest-date FMV per share. Reference line for capital gain/loss math (above = gain, below = loss vs basis).',
   },
+  earnings: {
+    label: 'Earnings',
+    description:
+      'Markers above the price bars at past earnings release dates. Color-coded: green = positive EPS surprise (actual > estimate), red = negative surprise, gray = no surprise data available. Earnings are often inflection points — gap moves the day after earnings tend to set the next regime. See the Recent Earnings widget below the witnesses for the per-event EPS details.',
+  },
 } as const satisfies Record<string, IndicatorDescription>;
 
 export type IndicatorKey = keyof typeof INDICATOR_DESCRIPTIONS;

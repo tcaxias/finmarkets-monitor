@@ -25,8 +25,8 @@ describe('migrations', () => {
   // Pin the current schema version. Bumping the schema requires
   // updating this expectation, which makes "did you remember to add a
   // migration?" a build-time question.
-  it('SCHEMA_VERSION is currently 5', () => {
-    expect(SCHEMA_VERSION).toBe(5);
+  it('SCHEMA_VERSION is currently 6', () => {
+    expect(SCHEMA_VERSION).toBe(6);
   });
 
   it('SCHEMA_VERSION matches the highest migration version', () => {

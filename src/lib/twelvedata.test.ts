@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildTimeSeriesUrl } from './twelvedata';
+import { buildTimeSeriesUrl, buildEarningsUrl } from './twelvedata';
 
 // We don't exercise the network in unit tests — the URL builder is
 // the only place where typos in interval/outputsize/apikey wiring
@@ -43,5 +43,27 @@ describe('buildTimeSeriesUrl', () => {
   it('coerces outputsize to string for query params', () => {
     const url = new URL(buildTimeSeriesUrl('AAPL', 'k', '1day', 1));
     expect(url.searchParams.get('outputsize')).toBe('1');
+  });
+});
+
+// fetchEarnings hits a different endpoint with a smaller param set —
+// same locking-down rationale: typos in symbol/apikey wiring would
+// silently produce wrong data, so we assert the URL shape directly.
+describe('buildEarningsUrl', () => {
+  it('builds an /earnings URL with all required parameters', () => {
+    const url = new URL(buildEarningsUrl('AAPL', 'demo-key'));
+    expect(url.host).toBe('api.twelvedata.com');
+    expect(url.pathname).toBe('/earnings');
+    expect(url.searchParams.get('symbol')).toBe('AAPL');
+    expect(url.searchParams.get('apikey')).toBe('demo-key');
+    expect(url.searchParams.get('format')).toBe('JSON');
+  });
+
+  it('URL-encodes special characters in the ticker (defensive)', () => {
+    // BRK.B is a legitimate ticker shape; we don't currently allow it
+    // in TICKER_RE but the URL builder must still emit a safe URL if
+    // a future change loosens the validator.
+    const url = buildEarningsUrl('BRK.B', 'k');
+    expect(url).toContain('symbol=BRK.B');
   });
 });

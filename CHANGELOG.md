@@ -5,6 +5,89 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added (Earnings event annotations)
+
+- **Earnings event markers on the price chart + Recent Earnings widget.**
+  Fetches past + (when available) upcoming earnings dates from Twelve
+  Data's `/earnings` endpoint, persists them in a new `earnings_events`
+  table (migration v6, PK `(ticker, dt)`), renders color-coded markers
+  above the candle bars, and surfaces the 4 most recent events in a
+  small per-ticker widget between Witnesses and Chart. Why: earnings
+  are often inflection points — gap moves the day after earnings tend
+  to set the next 1–3 month regime, so making "what happened to AAPL
+  around earnings" visually obvious is high-signal annotation.
+  - **Migration v6** (`src/lib/migrations.ts`): `earnings_events
+    (ticker, dt, time_of_day, eps_estimate, eps_actual, surprise_pct,
+    fetched_at)` with `(ticker, dt)` PK so re-fetches via INSERT OR
+    REPLACE update in place rather than producing duplicates. Schema
+    pin in `migrations.test.ts` bumped from 5 → 6.
+  - **`twelvedata.ts`**: new `fetchEarnings(ticker, apiKey)` and
+    exported `buildEarningsUrl` helper. Defensive about Twelve Data's
+    response shape — payload appears both as `{ earnings: [...] }`
+    and as a bare array depending on which gateway answered; either
+    parses cleanly, anything else becomes an empty events list rather
+    than a thrown error (earnings is auxiliary, missing data must
+    not block the OHLCV refresh path). Numeric fields parse via a
+    `parseFloatOrNull` helper that handles Twelve Data's
+    string-encoded numerics and legitimately-empty fields for
+    unconfirmed / pre-release events.
+  - **`data.svelte.ts`**: new `refreshEarnings(ticker)` wired into
+    `refreshData()` AFTER `refreshIndicators(ticker)` succeeds. Same
+    best-effort pattern as the indicator refresh: logs to console.warn
+    on failure and intentionally does NOT touch `dataState.error`. New
+    `dataState.earningsRowCount` and `dataState.earningsLastFetched`
+    per-ticker maps. `clearCache()` updated to drop `earnings_events`
+    and reset both maps.
+  - **`queries.ts`**: new `getEarnings(ticker, asOf?, since?)` read
+    function with the same compose-on-window contract as `getCandles`
+    (asOf upper bound for historical view, since lower bound for
+    timeframe windowing).
+  - **`evaluation.svelte.ts`**: new `earnings: EarningsEventRow[]`
+    field on `PerTickerEval`, fetched in the daily Promise.all
+    alongside the OHLCV / SMA / VWAP / RSI / MACD reads. Empty in
+    intraday (1D) mode — earnings are a daily-bars annotation.
+  - **`ChartPanel.svelte`**: uses the v5 `createSeriesMarkers` plugin
+    (the v4 `series.setMarkers([])` shorthand was removed) attached
+    to the candle series. Markers are color-coded: green for positive
+    EPS surprise, red for negative, gray for missing surprise data.
+    Toggleable via the new `chartPrefs.showEarnings` (default on).
+    Cleared automatically in intraday mode and when the slice has no
+    candles.
+  - **`chartPrefs.svelte.ts`**: new `showEarnings` field (default
+    `true`), included in the rehydration allowlist and the test
+    fixtures.
+  - **`ChartToolbar.svelte`**: new "Earnings" toggle button between
+    VWAP and Vol (daily-only — disabled in intraday view, same as the
+    SMA toggles).
+  - **`indicatorDescriptions.ts` + `IndicatorsAbout.svelte`**: new
+    `earnings` entry explaining the marker color encoding and the
+    "earnings as inflection points" framing; rendered between VWAP
+    and RSI in the about-indicators list.
+  - **`EarningsWidget.svelte`** (new): per-ticker table of the 4 most
+    recent earnings events (Date / Time / Estimate / Actual /
+    Surprise %), color-coded surprise column matching the chart
+    marker palette. Mounted in `App.svelte` between WitnessPanel and
+    ChartPanel; renders nothing when the ticker has no earnings rows.
+    Why a separate widget instead of marker hover tooltips:
+    Lightweight Charts v5's marker plugin doesn't expose hover
+    events — building a custom plugin for that was scoped out; the
+    widget gives the per-event EPS detail in a stable always-visible
+    table.
+  - **Integration tests**
+    (`src/lib/__tests__/earnings.integration.test.ts`): five tests
+    covering insert + ordered retrieval, INSERT OR REPLACE on the
+    `(ticker, dt)` PK (no duplicates on re-fetch), `asOf` upper-bound
+    (historical view doesn't show future earnings), `since` lower-
+    bound (timeframe clipping), and NULL-field preservation for
+    unconfirmed reports. The duckdb-fixture's `applyMigrations`
+    inlines the v6 DDL.
+  - **Unit tests** (`src/lib/twelvedata.test.ts`): two new tests for
+    `buildEarningsUrl` covering required-params shape and special-
+    char URL encoding (defensive — TICKER_RE doesn't currently allow
+    dots but the URL builder must stay safe if loosened).
+  - **Cost**: 1 extra Twelve Data API call per ticker per refresh
+    (free-tier supports it; counts against the 800/day quota).
+
 ### Added (VWAP overlay)
 
 - **20-day rolling VWAP (Volume-Weighted Average Price)** as a new

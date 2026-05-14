@@ -424,6 +424,80 @@ export interface SnapshotRow {
   rowCount: number;
 }
 
+export interface EarningsEventRow {
+  /** ISO yyyy-mm-dd date string for table display. */
+  dt: string;
+  /** Unix seconds for chart marker placement (matches the candle series time axis). */
+  time: number;
+  timeOfDay: string | null;
+  epsEstimate: number | null;
+  epsActual: number | null;
+  surprisePct: number | null;
+}
+
+/**
+ * Earnings events for `ticker`, optionally bounded by `asOf` (upper)
+ * and `since` (lower) date filters. Same composition contract as
+ * `getCandles` so chart consumers can pass the same window args and
+ * get markers aligned to the visible bar range.
+ *
+ * `asOf` matters in historical-view mode (we don't want a marker for
+ * an earnings release that hadn't happened yet on the as-of date).
+ * `since` clips earnings older than the visible chart window so the
+ * marker plugin doesn't emit a thousand circles when the user is on
+ * a 1M view.
+ */
+export async function getEarnings(
+  ticker: string,
+  asOf?: string | null,
+  since?: string | null,
+): Promise<EarningsEventRow[]> {
+  const conn = await getConn();
+  let clause = `WHERE ticker = ?`;
+  const params: unknown[] = [ticker];
+  if (since) {
+    clause += ` AND dt >= CAST(? AS DATE)`;
+    params.push(since);
+  }
+  if (asOf) {
+    clause += ` AND dt <= CAST(? AS DATE)`;
+    params.push(asOf);
+  }
+  const sql = `
+    SELECT
+      dt,
+      epoch(dt)::BIGINT AS time,
+      time_of_day,
+      eps_estimate,
+      eps_actual,
+      surprise_pct
+    FROM earnings_events
+    ${clause}
+    ORDER BY dt
+  `;
+  const stmt = await conn.prepare(sql);
+  try {
+    const tbl = await stmt.query(...params);
+    return tbl.toArray().map((row) => {
+      const r = row.toJSON() as Record<string, unknown>;
+      const timeOfDayRaw = r.time_of_day;
+      return {
+        dt: formatDateValue(r.dt),
+        time: toNum(r.time),
+        timeOfDay:
+          typeof timeOfDayRaw === 'string' && timeOfDayRaw.trim()
+            ? timeOfDayRaw
+            : null,
+        epsEstimate: toNullableNum(r.eps_estimate),
+        epsActual: toNullableNum(r.eps_actual),
+        surprisePct: toNullableNum(r.surprise_pct),
+      };
+    });
+  } finally {
+    await stmt.close();
+  }
+}
+
 /**
  * One row per ticker with the latest OHLCV plus prev_close. Backed by the
  * `current_snapshot` view (migration v2). Lets PortfolioOverview render

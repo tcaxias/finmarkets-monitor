@@ -68,6 +68,7 @@ describe('chartPrefs', () => {
       expect(mod.chartPrefs.showVestLine).toBe(true);
       expect(mod.chartPrefs.showRsiPane).toBe(true);
       expect(mod.chartPrefs.showMacdPane).toBe(true);
+      expect(mod.chartPrefs.showEarnings).toBe(true);
     });
   });
 
@@ -106,6 +107,7 @@ describe('chartPrefs', () => {
           showVestLine: false,
           showRsiPane: false,
           showMacdPane: false,
+          showEarnings: false,
         }),
       });
       const mod = await freshModule();
@@ -119,6 +121,7 @@ describe('chartPrefs', () => {
       expect(mod.chartPrefs.showVestLine).toBe(false);
       expect(mod.chartPrefs.showRsiPane).toBe(false);
       expect(mod.chartPrefs.showMacdPane).toBe(false);
+      expect(mod.chartPrefs.showEarnings).toBe(false);
     });
 
     it('falls back to defaults when localStorage holds garbage JSON', async () => {

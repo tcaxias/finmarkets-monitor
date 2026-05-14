@@ -462,6 +462,39 @@ export const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    version: 6,
+    description:
+      'Earnings events table (date + EPS actual/estimate/surprise per ticker)',
+    up: async (conn) => {
+      // One row per (ticker, earnings date). Stores the EPS estimate +
+      // actual reported by Twelve Data plus the precomputed surprise %
+      // (we keep the source's value rather than rederive — Twelve Data
+      // sometimes reports surprise on the consensus they tracked even
+      // when our estimate/actual recorded here would imply a different
+      // number after rounding). `time_of_day` is 'Before Market', 'After
+      // Market', or NULL when the source omitted it. `fetched_at` is
+      // an audit column so a future "stale data" check can decide when
+      // to re-fetch (typically once per ticker per refresh).
+      //
+      // Earnings is auxiliary data — chart still renders without it,
+      // and a missing or out-of-shape /earnings response from Twelve
+      // Data must NOT block the OHLCV refresh path. The data layer
+      // logs to console.warn rather than surfacing to dataState.error.
+      await conn.query(`
+        CREATE TABLE IF NOT EXISTS earnings_events (
+          ticker VARCHAR NOT NULL,
+          dt DATE NOT NULL,
+          time_of_day VARCHAR,
+          eps_estimate DOUBLE,
+          eps_actual DOUBLE,
+          surprise_pct DOUBLE,
+          fetched_at TIMESTAMP NOT NULL,
+          PRIMARY KEY (ticker, dt)
+        );
+      `);
+    },
+  },
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;

@@ -40,7 +40,8 @@
     | 'showPcoverLines'
     | 'showVestLine'
     | 'showRsiPane'
-    | 'showMacdPane';
+    | 'showMacdPane'
+    | 'showEarnings';
 
   interface ToggleDef {
     key: ToggleKey;
@@ -55,6 +56,10 @@
     { key: 'showSma50', short: 'SMA50', indicator: 'sma50', dailyOnly: true },
     { key: 'showSma200', short: 'SMA200', indicator: 'sma200', dailyOnly: true },
     { key: 'showVwap', short: 'VWAP', indicator: 'vwap', dailyOnly: true },
+    // Earnings markers — daily-only (intraday slice has earnings = []).
+    // Grouped with the trend overlays here because they're a price-axis
+    // annotation in the same conceptual band as the moving averages.
+    { key: 'showEarnings', short: 'Earnings', indicator: 'earnings', dailyOnly: true },
     { key: 'showVolume', short: 'Vol', indicator: 'volume', dailyOnly: false },
     { key: 'showPcoverLines', short: 'Pcover', indicator: 'pcover', dailyOnly: false },
     { key: 'showVestLine', short: 'Vest', indicator: 'vest', dailyOnly: false },

@@ -13,6 +13,7 @@ import { ensureSchema, getConn, resetSchemaMemo } from './duckdb';
 import { refreshIndicators } from './sqlIndicators';
 import {
   fetchDailyOhlcv,
+  fetchEarnings,
   fetchIntradayOhlcv,
   TwelveDataError,
   type OhlcvRow,
@@ -39,6 +40,10 @@ export interface DataState {
   intradayRowCount: Record<string, number>;
   /** Set while an intraday refresh is in flight (independent of `loading`). */
   intradayLoading: boolean;
+  /** Per-ticker count of stored earnings_events rows. */
+  earningsRowCount: Record<string, number>;
+  /** Per-ticker last successful earnings refresh timestamp. */
+  earningsLastFetched: Record<string, Date | null>;
 }
 
 export const dataState = $state<DataState>({
@@ -53,6 +58,8 @@ export const dataState = $state<DataState>({
   intradayLastFetched: {},
   intradayRowCount: {},
   intradayLoading: false,
+  earningsRowCount: {},
+  earningsLastFetched: {},
 });
 
 // Debounce: prevent runaway clicks against an 8-req/min free tier.
@@ -130,6 +137,12 @@ export async function refreshData(tickerArg?: string): Promise<boolean> {
       );
       dataState.error = `Indicator refresh failed for ${ticker}: ${msg}`;
     }
+    // Earnings refresh is best-effort: a Twelve Data /earnings hiccup
+    // (rate limit, malformed payload, network blip) must NOT block the
+    // OHLCV refresh. The function logs to console.warn on failure and
+    // intentionally does NOT touch dataState.error — earnings markers
+    // are auxiliary annotation, not core data.
+    await refreshEarnings(ticker);
     await refreshState(ticker);
     ok = true;
   } catch (err) {
@@ -461,6 +474,97 @@ export async function refreshState(tickerArg?: string): Promise<void> {
   }
 }
 
+// Ticker shape check used by `refreshEarnings` before quoting the
+// ticker into a SQL string for the COUNT lookup. The schema permits
+// any VARCHAR but everything inserted via the app passes the validator
+// in settings.svelte.ts. Inlined here to avoid a dependency cycle
+// against the reactive settings store.
+const REFRESH_EARNINGS_TICKER_RE = /^[A-Z0-9]{1,10}$/;
+
+/**
+ * Fetch earnings events for `ticker` from Twelve Data and persist them
+ * to the `earnings_events` table. Best-effort — never throws or
+ * surfaces to dataState.error. Logs failures to console.warn so a user
+ * who notices missing markers can investigate via devtools.
+ *
+ * Why best-effort: earnings annotations are auxiliary chart decoration.
+ * The OHLCV refresh path is the source of truth and must not be
+ * blocked by an /earnings endpoint hiccup (rate limit, malformed
+ * response, etc).
+ *
+ * Idempotency: uses INSERT OR REPLACE on the (ticker, dt) PK so
+ * re-fetches overwrite the prior row rather than producing duplicates.
+ * Per-call cost: 1 Twelve Data API credit.
+ */
+export async function refreshEarnings(ticker: string): Promise<void> {
+  const t = ticker.trim().toUpperCase();
+  const apiKey = settings.apiKey.trim();
+  if (!apiKey || !t) return;
+  // Validate ticker shape before any SQL — defence in depth, even
+  // though everything that reaches here came through validated paths.
+  if (!REFRESH_EARNINGS_TICKER_RE.test(t)) {
+    console.warn(`refreshEarnings: skipping malformed ticker '${t}'`);
+    return;
+  }
+  try {
+    const { events } = await fetchEarnings(t, apiKey);
+    if (events.length === 0) {
+      // Empty response is legitimate — many tickers have no earnings
+      // history within Twelve Data's coverage window. Update the
+      // count to 0 so the UI can render "no earnings data" affordances.
+      dataState.earningsRowCount[t] = 0;
+      dataState.earningsLastFetched[t] = new Date();
+      return;
+    }
+    await ensureSchema();
+    const conn = await getConn();
+    await conn.query('BEGIN TRANSACTION');
+    try {
+      // INSERT OR REPLACE so re-fetches update existing rows in place
+      // rather than producing PK conflicts.
+      const stmt = await conn.prepare(
+        `INSERT OR REPLACE INTO earnings_events
+         (ticker, dt, time_of_day, eps_estimate, eps_actual, surprise_pct, fetched_at)
+         VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+      );
+      try {
+        for (const e of events) {
+          await stmt.query(
+            t,
+            e.date,
+            e.timeOfDay,
+            e.epsEstimate,
+            e.epsActual,
+            e.surprisePct,
+          );
+        }
+      } finally {
+        await stmt.close();
+      }
+      await conn.query('COMMIT');
+    } catch (err) {
+      await conn.query('ROLLBACK').catch(() => {});
+      throw err;
+    }
+    // Inline the ticker (already shape-validated above) since DuckDB-
+    // WASM's bind types don't always recognise plain JS strings as
+    // VARCHAR comparison operands here. Single-tick injection isn't
+    // possible after the regex gate.
+    const countResult = await conn.query(
+      `SELECT COUNT(*) AS c FROM earnings_events WHERE ticker = '${t}'`,
+    );
+    const rows = countResult.toArray().map((r) => r.toJSON() as { c: bigint });
+    dataState.earningsRowCount[t] = Number(rows[0]?.c ?? 0);
+    dataState.earningsLastFetched[t] = new Date();
+  } catch (err) {
+    // Best-effort path. Don't surface to dataState.error — earnings
+    // are auxiliary, OHLCV is what matters. If the user wants to
+    // investigate a missing/empty earnings widget they can check the
+    // browser console.
+    console.warn(`Earnings refresh failed for ${ticker}:`, err);
+  }
+}
+
 export async function clearCache(): Promise<void> {
   const conn = await getConn();
   // Drop the view first (depends on ohlcv), then the data tables, then the
@@ -475,6 +579,7 @@ export async function clearCache(): Promise<void> {
   // to rebuild from scratch.
   await conn.query('DROP TABLE IF EXISTS indicators_rsi');
   await conn.query('DROP TABLE IF EXISTS indicators_macd');
+  await conn.query('DROP TABLE IF EXISTS earnings_events');
   await conn.query('DROP TABLE IF EXISTS ohlcv');
   await conn.query('DROP TABLE IF EXISTS ohlcv_intraday');
   await conn.query('DROP TABLE IF EXISTS fetch_log');
@@ -490,6 +595,8 @@ export async function clearCache(): Promise<void> {
   dataState.latestDateByTicker = {};
   dataState.intradayRowCount = {};
   dataState.intradayLastFetched = {};
+  dataState.earningsRowCount = {};
+  dataState.earningsLastFetched = {};
   dataState.lastFetched = null;
   await refreshState();
 }
