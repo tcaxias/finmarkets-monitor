@@ -228,7 +228,7 @@
             <input
               type="text"
               bind:value={formTicker}
-              placeholder="e.g. AAPL, AAPL, NVDA"
+              placeholder="e.g. AAPL, NVDA, MSFT"
               autocomplete="off"
               maxlength="10"
             />

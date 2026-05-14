@@ -1,7 +1,7 @@
 // Sunday weekly-review markdown generator.
 //
 // Produces a pre-filled version of the canonical weekly-review template
-// (`~/docs/finmarkets/aapl-weekly-review.md`). Computable fields — those
+// (`~/docs/finmarkets/weekly-review.md`). Computable fields — those
 // derivable from market data alone — are auto-filled. Judgment fields (the
 // tradeability gate, S/R levels, the decision section, calendar items, and
 // the cognitive-integrity checks) are left as `______` placeholders so the
@@ -163,7 +163,7 @@ function redFlagWarning(inputs: ReviewInputs): string {
     `> ⚠️ **WARNING — red-flag triggers active:**`,
     ...flags.map((f) => `> - ${f}`),
     `>`,
-    `> Re-read the relevant phase of \`aapl-monitoring-guide.md\` and act within the next valid trading window. Do not wait for Sunday.`,
+    `> Re-read the relevant phase of \`monitoring-guide.md\` and act within the next valid trading window. Do not wait for Sunday.`,
   ].join('\n');
 }
 
@@ -687,7 +687,7 @@ function redFlagTriggers(inputs: ReviewInputs): string {
       ? [``, ...flags.map((f) => `- ⚠️ ${f}`)]
       : []),
     ``,
-    `If any of these → re-read the relevant phase of \`aapl-monitoring-guide.md\` and act`,
+    `If any of these → re-read the relevant phase of \`monitoring-guide.md\` and act`,
     `within the next valid trading window. Do not wait for Sunday.`,
   ].join('\n');
 }

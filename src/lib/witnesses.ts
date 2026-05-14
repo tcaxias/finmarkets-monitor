@@ -5,7 +5,7 @@
 // (bullish / bearish / neutral) plus a one-line reason. `summarize` then
 // tallies the three verdicts into an overall conviction level.
 //
-// The methodology is documented in `~/docs/finmarkets/aapl-monitoring-guide.md`
+// The methodology is documented in `~/docs/finmarkets/monitoring-guide.md`
 // Phase 3 ("three-witness rule"). The TL;DR:
 //
 //   3 of 3 same direction → high-conviction in that direction

@@ -288,11 +288,11 @@
           <p>Companion documents (local references, will not resolve in the browser):</p>
           <ul>
             <li>
-              <code>~/docs/finmarkets/aapl-monitoring-guide.md</code> — three-phase
+              <code>~/docs/finmarkets/monitoring-guide.md</code> — three-phase
               educational guide
             </li>
             <li>
-              <code>~/docs/finmarkets/aapl-weekly-review.md</code> — Sunday
+              <code>~/docs/finmarkets/weekly-review.md</code> — Sunday
               checklist template
             </li>
           </ul>

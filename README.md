@@ -68,8 +68,8 @@ and must be kept in sync with the installed npm package. If you bump
 
 The methodology this app implements lives in:
 
-- `~/docs/finmarkets/aapl-monitoring-guide.md` — three-phase educational guide
-- `~/docs/finmarkets/aapl-weekly-review.md` — the Sunday checklist template
+- `~/docs/finmarkets/monitoring-guide.md` — three-phase educational guide
+- `~/docs/finmarkets/weekly-review.md` — the Sunday checklist template
 
 ## Disclaimers
 
