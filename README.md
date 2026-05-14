@@ -72,6 +72,9 @@ The methodology this app implements lives in:
 - `~/docs/finmarkets/monitoring-guide.md` — three-phase educational guide
 - `~/docs/finmarkets/weekly-review.md` — the Sunday checklist template
 
+For honest engineering record of known limitations, conscious tradeoffs, and
+deferred work, see [GAPS.md](./GAPS.md).
+
 ## Disclaimers
 
 Educational use only. Not investment, tax, or legal advice. The app applies
