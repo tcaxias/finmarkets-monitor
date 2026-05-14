@@ -2,7 +2,7 @@
   "name": "finmarkets-monitor",
   "private": true,
   "version": "0.0.0",
-  "license": "Apache-2.0 OR ISC",
+  "license": "Apache-2.0 OR MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",

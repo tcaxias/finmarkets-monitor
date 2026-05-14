@@ -3,12 +3,13 @@ finmarkets-monitor is dual-licensed at your option under either of:
   - Apache License, Version 2.0
     (see LICENSE-APACHE or http://www.apache.org/licenses/LICENSE-2.0)
 
-  - ISC License
-    (see LICENSE-ISC)
+  - MIT License
+    (see LICENSE-MIT)
 
 You may choose which license to use under. Contributions are accepted
-under both licenses simultaneously (the "Apache-2.0 OR ISC" SPDX
-expression).
+under both licenses simultaneously (the "Apache-2.0 OR MIT" SPDX
+expression — the same dual-license pattern used by Rust and many
+crates in its ecosystem).
 
 Copyright (c) 2026 Tiago Caxias
 

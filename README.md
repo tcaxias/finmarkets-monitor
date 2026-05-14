@@ -90,15 +90,16 @@ documents.
 Dual-licensed at your option under either:
 
 - [Apache License, Version 2.0](./LICENSE-APACHE)
-- [ISC License](./LICENSE-ISC)
+- [MIT License](./LICENSE-MIT)
 
-SPDX-License-Identifier: `Apache-2.0 OR ISC`
+SPDX-License-Identifier: `Apache-2.0 OR MIT`
 
 Copyright © 2026 Tiago Caxias.
 
 Contributions are accepted under both licenses simultaneously. By submitting
-a contribution you agree to license it under the same `Apache-2.0 OR ISC`
-terms as the rest of the project.
+a contribution you agree to license it under the same `Apache-2.0 OR MIT`
+terms as the rest of the project. (This is the same dual-license pattern
+used by [Rust](https://www.rust-lang.org/policies/licenses) and most crates.)
 
 ### Bundled and runtime-loaded dependencies
 

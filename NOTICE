@@ -2,8 +2,8 @@ finmarkets-monitor
 Copyright (c) 2026 Tiago Caxias
 
 This product is dual-licensed under the Apache License, Version 2.0
-(LICENSE-APACHE) and the ISC License (LICENSE-ISC) at the recipient's
-option. SPDX-License-Identifier: Apache-2.0 OR ISC
+(LICENSE-APACHE) and the MIT License (LICENSE-MIT) at the recipient's
+option. SPDX-License-Identifier: Apache-2.0 OR MIT
 
 ================================================================================
 Bundled and runtime-loaded third-party dependencies
