@@ -3,7 +3,11 @@
   "entry": [
     "src/App.svelte",
     "src/**/*.test.ts",
-    "src/lib/__tests__/*.integration.test.ts"
+    "src/lib/__tests__/*.integration.test.ts",
+    "src/components/ScreenerPanel.svelte",
+    "src/components/AnomaliesPanel.svelte",
+    "src/components/BacktestPanel.svelte",
+    "src/components/IndicatorsAbout.svelte"
   ],
   "project": [
     "src/**/*.{ts,svelte,svelte.ts}"

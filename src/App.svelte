@@ -20,8 +20,8 @@
   import PortfolioOverview from './components/PortfolioOverview.svelte';
   import PortfolioCharts from './components/PortfolioCharts.svelte';
   import PortfolioReview from './components/PortfolioReview.svelte';
-  import ScreenerPanel from './components/ScreenerPanel.svelte';
-  import AnomaliesPanel from './components/AnomaliesPanel.svelte';
+  import LazyScreenerPanel from './components/lazy/LazyScreenerPanel.svelte';
+  import LazyAnomaliesPanel from './components/lazy/LazyAnomaliesPanel.svelte';
   import PositionsPanel from './components/PositionsPanel.svelte';
   import DataPanel from './components/DataPanel.svelte';
   import WitnessPanel from './components/WitnessPanel.svelte';
@@ -30,8 +30,8 @@
   import ChartPanel from './components/ChartPanel.svelte';
   import RsiPanel from './components/RsiPanel.svelte';
   import MacdPanel from './components/MacdPanel.svelte';
-  import IndicatorsAbout from './components/IndicatorsAbout.svelte';
-  import BacktestPanel from './components/BacktestPanel.svelte';
+  import LazyIndicatorsAbout from './components/lazy/LazyIndicatorsAbout.svelte';
+  import LazyBacktestPanel from './components/lazy/LazyBacktestPanel.svelte';
   import ReviewExport from './components/ReviewExport.svelte';
   import { getDb, getVersion } from './lib/duckdb';
   import { refreshState, dataState } from './lib/data.svelte';
@@ -243,10 +243,10 @@
         <PortfolioOverview />
       </section>
       <section class="container wide stack" id="screener">
-        <ScreenerPanel />
+        <LazyScreenerPanel />
       </section>
       <section class="container wide stack" id="anomalies">
-        <AnomaliesPanel />
+        <LazyAnomaliesPanel />
       </section>
       <section class="container wide stack" id="chart">
         <PortfolioCharts />
@@ -282,11 +282,11 @@
              daily timeframe restores the panes (review Polish #1). -->
         {#if chartPrefs.showRsiPane && chartPrefs.timeframe !== '1D'}<RsiPanel />{/if}
         {#if chartPrefs.showMacdPane && chartPrefs.timeframe !== '1D'}<MacdPanel />{/if}
-        <IndicatorsAbout />
+        <LazyIndicatorsAbout />
       </section>
 
       <section class="container wide stack" id="backtest">
-        <BacktestPanel />
+        <LazyBacktestPanel />
       </section>
 
       <section class="container narrow stack" id="review">
