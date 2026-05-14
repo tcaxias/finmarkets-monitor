@@ -33,6 +33,7 @@
   import MacdPanel from './components/MacdPanel.svelte';
   import LazyIndicatorsAbout from './components/lazy/LazyIndicatorsAbout.svelte';
   import LazyBacktestPanel from './components/lazy/LazyBacktestPanel.svelte';
+  import LazyAlertsPanel from './components/lazy/LazyAlertsPanel.svelte';
   import ReviewExport from './components/ReviewExport.svelte';
   import { getDb, getVersion } from './lib/duckdb';
   import { refreshState, dataState } from './lib/data.svelte';
@@ -40,6 +41,8 @@
   import { ensureSlice, getEval, recomputeAll, recomputeOne } from './lib/evaluation.svelte';
   import { viewState, setAsOfDate, daysAgo } from './lib/viewState.svelte';
   import { chartPrefs } from './lib/chartPrefs.svelte';
+  import { runAlertsForTicker } from './lib/alertsRunner.svelte';
+  import ToastContainer from './components/ToastContainer.svelte';
 
   let dbStatus = $state<'loading' | 'ready' | 'error'>('loading');
   let dbVersion = $state<string>('');
@@ -129,6 +132,36 @@
     }
   });
 
+  // Alert evaluation trigger. After each ticker's slice generation
+  // advances (i.e. a recompute landed with fresh data), run any
+  // matching alert rules. The slice already holds the post-recompute
+  // values for close / RSI / MACD; alertsRunner builds the full
+  // EvaluationContext (adding drawdown + Pcover-derived metrics) and
+  // emits toasts + browser notifications for any newly-fired alerts.
+  //
+  // Why this seam (App-level effect on slice.generation) rather than
+  // a callback inside `recomputeOne`:
+  //   - recomputeOne stays a pure data function (no UI side effects).
+  //   - Generation is the canonical "data is fresh" signal — using it
+  //     also covers the case where a recompute is triggered by a
+  //     timeframe / asOf change without a data refresh, but the alert
+  //     should still re-evaluate the new state.
+  //   - alertsRunner internally dedupes per-(ticker, generation), so
+  //     extraneous re-runs (multiple effects coalesced into one tick)
+  //     are cheap.
+  //
+  // Iterates every position so alerts on a non-active ticker still fire
+  // when the user is parked on a different per-ticker view.
+  $effect(() => {
+    if (dbStatus !== 'ready') return;
+    for (const p of settings.positions) {
+      // Touch the generation so this effect re-runs when ANY slice
+      // refreshes. Without the read, only the first call would track.
+      void getEval(p.ticker).generation;
+      void runAlertsForTicker(p.ticker);
+    }
+  });
+
   // Intraday-refresh trigger. The intraday refresh path writes to
   // ohlcv_intraday and updates dataState.intradayLastFetched, but the
   // daily refresh effect above only watches `rowCount` and
@@ -173,6 +206,12 @@
 </script>
 
 <div class="page" class:historical={viewState.asOfDate !== null}>
+  <!-- Toast container: fixed-position stack at top-right, above
+       everything else. Renders nothing when there are no active
+       toasts. Mounted at the page root so its z-index isolation is
+       independent of the section layout. -->
+  <ToastContainer />
+
   <header class="site-header">
     <div class="container narrow">
       <h1>{headerTitle}</h1>
@@ -206,6 +245,7 @@
         <a href="#chart">Chart</a>
         <a href="#indicators">Indicators</a>
         <a href="#backtest">Backtest</a>
+        <a href="#alerts">Alerts</a>
         <a href="#review">Review</a>
       {/if}
       <a href="#positions">Positions</a>
@@ -292,6 +332,14 @@
 
       <section class="container wide stack" id="backtest">
         <LazyBacktestPanel />
+      </section>
+
+      <!-- Alerts panel — per-ticker rule definitions, fire history,
+           browser-notification permission status. Lazy-loaded so the
+           CRUD path + alerts.ts module only ship as a chunk that
+           downloads when the user lands on a per-ticker view. -->
+      <section class="container wide stack" id="alerts">
+        <LazyAlertsPanel />
       </section>
 
       <section class="container narrow stack" id="review">

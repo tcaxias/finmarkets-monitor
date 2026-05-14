@@ -495,6 +495,74 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 7,
+    description:
+      'Alerts: rule definitions (alerts) + edge-triggered fire log (alert_fires)',
+    up: async (conn) => {
+      // Two tables for the alerting system:
+      //
+      //   alerts        — user-defined rule definitions. The `last_state`
+      //                   / `last_evaluated_value` / `last_evaluated_at`
+      //                   columns live INSIDE this table (rather than
+      //                   in a separate "alert_state" sidecar) because
+      //                   they're 1:1 with the rule and edge-detection
+      //                   wants both rule + state in a single SELECT
+      //                   for atomicity. `last_state` is a string enum
+      //                   ('above'/'below'/'inside'/'outside') — the
+      //                   prior state used by edge-trigger logic to
+      //                   decide "did we just transition into the
+      //                   firing zone, or are we still in it?".
+      //
+      //   alert_fires   — append-only log of every fire event.
+      //                   Documentary FOREIGN KEY to alerts(id); DuckDB
+      //                   doesn't enforce FKs at runtime but the
+      //                   declaration is intent-bearing for anyone
+      //                   reading the schema.
+      //
+      // Why two tables? An alert rule has at most one row in `alerts`
+      // (CRUD target), and a potentially-unbounded log of fire events.
+      // Co-mingling them as a single "alerts with fire history columns"
+      // table would either cap the history (lossy) or denormalize the
+      // rule (update anomalies on label/threshold edits).
+      //
+      // Why `id` is VARCHAR not UUID: DuckDB-WASM's UUID type works but
+      // the JS layer hands us strings everywhere anyway
+      // (crypto.randomUUID → string). Keeping the column VARCHAR avoids
+      // type coercion at the bind boundary and matches the existing
+      // positions/genId pattern in settings.svelte.ts.
+      await conn.query(`
+        CREATE TABLE IF NOT EXISTS alerts (
+          id VARCHAR PRIMARY KEY,
+          ticker VARCHAR NOT NULL,
+          metric VARCHAR NOT NULL,
+          operator VARCHAR NOT NULL,
+          threshold DOUBLE NOT NULL,
+          threshold_band_high DOUBLE,
+          enabled BOOLEAN NOT NULL DEFAULT TRUE,
+          label VARCHAR,
+          created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          last_evaluated_at TIMESTAMP,
+          last_evaluated_value DOUBLE,
+          last_state VARCHAR
+        );
+      `);
+      await conn.query(`
+        CREATE TABLE IF NOT EXISTS alert_fires (
+          id VARCHAR PRIMARY KEY,
+          alert_id VARCHAR NOT NULL,
+          fired_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          ticker VARCHAR NOT NULL,
+          metric VARCHAR NOT NULL,
+          observed_value DOUBLE NOT NULL,
+          threshold DOUBLE NOT NULL,
+          message VARCHAR NOT NULL,
+          acknowledged BOOLEAN NOT NULL DEFAULT FALSE,
+          FOREIGN KEY (alert_id) REFERENCES alerts(id)
+        );
+      `);
+    },
+  },
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;

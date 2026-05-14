@@ -7,6 +7,139 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Alerts: DuckDB-persisted rules + edge-triggered evaluation +
+  toasts + browser notifications.** Turns the app from passive
+  monitoring to active. Users define alert rules ("FIVN close crosses
+  below $20", "AAPL RSI crosses above 70", "RSI enters band [40,60]")
+  via a new per-ticker AlertsPanel; the data layer evaluates them on
+  every successful refresh and surfaces fires through both an in-app
+  toast (always — top-right floating stack via new ToastContainer)
+  AND a browser OS-level Notification (when permission granted).
+  - **Migration v7** (`src/lib/migrations.ts`): two new tables.
+    `alerts` holds the rule definitions plus `last_state` /
+    `last_evaluated_value` / `last_evaluated_at` for the edge-detection
+    state machine. `alert_fires` is an append-only log of every fire
+    event with an `acknowledged` flag. Documentary FOREIGN KEY
+    `alert_fires.alert_id → alerts.id` (DuckDB doesn't enforce FKs;
+    the production `deleteAlert` does the cascade explicitly).
+    Schema pin in `migrations.test.ts` bumped from 6 → 7.
+  - **Supported metrics**: `close` (latest close price), `rsi`
+    (latest RSI(14)), `macd_hist` (latest MACD histogram),
+    `distance_from_pcover_pct` (relative to user's Pcover —
+    null when the position has no tax overhang configured),
+    `drawdown_pct` (current drawdown from rolling 252-day high).
+    Read from the per-ticker evaluation slice (`getEval(ticker)`)
+    plus a one-shot `getDrawdowns()` query, so no extra DB
+    roundtrips beyond what the chart already does.
+  - **Supported operators**: `crosses_above` / `crosses_below`
+    (single threshold) + `enters_band` / `exits_band` (range; needs
+    threshold + threshold_band_high). Validation rejects band ops
+    where high <= low (would be an empty interval).
+  - **Edge detection**: each rule tracks its prior state
+    ('above'/'below' for single-threshold ops, 'inside'/'outside'
+    for band ops). A `crosses_below` fires only on the
+    above→below transition, NOT on subsequent below→below ticks.
+    Prevents the most common alert-system bug — notification spam
+    while the metric stays in the firing zone. First-evaluation
+    behaviour: fires immediately if the metric is already in the
+    firing zone, matching the intuitive "tell me if AAPL is below
+    $200" mental model when AAPL is already at $190.
+  - **`src/lib/alerts.ts`**: `evaluateAlerts(ctx)` pure data-layer
+    function that reads enabled rules for the ticker, runs the
+    state machine, persists fire rows, and returns the array of
+    fires that just transitioned. Also full CRUD: `listAlerts`,
+    `createAlert`, `setAlertEnabled`, `deleteAlert`, `listFires`,
+    `acknowledgeFire`, `clearAcknowledgedFires`. Module-private
+    `updateAlert` and `getAlert` (full edit-in-place is post-v1).
+  - **`src/lib/notifications.svelte.ts`**: browser Notification API
+    wrapper + reactive toast queue (`toastsState` Svelte 5 rune
+    state). Permission requested lazily on user click — never on
+    page load (Chrome / Firefox / Safari all flag page-load
+    permission requests as a UX antipattern and auto-deny).
+    Notification API gracefully degrades: when unsupported (older
+    Safari, headless Chrome in some configs, server-side render),
+    `fireBrowserNotification` returns false and the toast is the
+    sole sink. Toast TTL defaults to 30s; `ttlMs: 0` reserved for
+    persistent toasts that need manual dismissal. Notification
+    `tag` deduplicates OS notifications per alert ID so re-fires
+    after a state cycle replace dismissed cards rather than
+    stacking.
+  - **`src/lib/alertsRunner.svelte.ts`**: thin glue between the
+    per-ticker evaluation slice and the alert evaluator + toast
+    surfaces. Builds the `EvaluationContext` from the slice's
+    latestClose / RSI / MACD plus a one-shot `getDrawdowns()` query
+    + the position's Pcover (computed inline from vest/share/tax to
+    avoid circular import with witnesses.ts). Idempotent within a
+    `(ticker, generation)` tuple so extra effect re-runs are a
+    no-op. Skipped in intraday mode (RSI/MACD arrays are empty in
+    1D and re-firing on intraday refreshes would fight the daily-
+    refresh edge-trigger semantics).
+  - **`src/components/AlertsPanel.svelte`** (new, lazy-loaded via
+    `LazyAlertsPanel`): per-ticker view with four sections —
+    browser-notification permission status (with Request button
+    that's the user-gesture entry point), Add-alert form (locked
+    to active position's ticker; metric/operator selects;
+    threshold + threshold-high inputs with conditional band-high
+    visibility; optional label), Active rules table (enable
+    toggle, label, rule text, last evaluated value, last state
+    color-coded, delete), Recent fires table (timestamp, message,
+    observed value vs threshold, ack button + "Clear acknowledged"
+    bulk action). Mounted in `App.svelte` between BacktestPanel
+    and ReviewExport in the per-ticker view; new `#alerts` entry
+    in the per-ticker page nav.
+  - **`src/components/ToastContainer.svelte`** (new, eager): fixed-
+    position stack at top-right (z-index 100, top: 80px to clear
+    the page-nav and historical-banner). Slide-in animation;
+    pointer-events disabled on the wrapper so clicks fall through
+    gaps to the page below. Tone palette (info / success / warn /
+    alert) with left-border accents matching the existing pill
+    styling. Mounted at the page root of `App.svelte`.
+  - **Wiring in App.svelte**: a new `$effect` watches every
+    configured position's `getEval(ticker).generation` and triggers
+    `runAlertsForTicker(ticker)` on advance. Why this seam (App-
+    level effect on slice.generation) rather than a callback
+    inside `recomputeOne`: keeps `recomputeOne` a pure data
+    function (no UI side effects) and uses generation as the
+    canonical "data is fresh" signal — also covers the case where
+    a recompute is triggered by a timeframe / asOf change without
+    a data refresh, but the alert should still re-evaluate against
+    the new state. alertsRunner internally dedupes per-(ticker,
+    generation), so coalesced effect re-runs are cheap.
+  - **Knip**: AlertsPanel added to the entry list (used only via
+    dynamic import from LazyAlertsPanel).
+  - **Integration tests** (`src/lib/__tests__/alerts.integration.test.ts`):
+    8 tests pinning the schema + state machine. The headline test
+    is the crosses_below edge-trigger sequence (105 → 102 → 99 →
+    95 → 102 with threshold 100 fires exactly ONCE on the
+    above→below transition, not on the subsequent below→below
+    tick — pins the most-common bug class for alerting systems).
+    Mirror crosses_above + enters_band tests cover the symmetric
+    cases. Additional pins: rule-row column round-trip, fire-row
+    column population, disabled-alert non-firing (production-path
+    `WHERE enabled = TRUE` filter), first-tick fires-immediately
+    edge case, FK-style cascade pattern (production deleteAlert
+    cleans alert_fires before alerts since DuckDB doesn't enforce
+    FKs). Fixture's `applyMigrations` updated to inline the v7
+    DDL so other suites picking up new schema features get them
+    transparently.
+  - **Browser-API edge cases worth knowing**:
+    - `Notification.requestPermission()` MUST be called from a
+      user gesture handler. The AlertsPanel's "Request permission"
+      button is the only entry point — never call from
+      `onMount`/`$effect` or the request gets auto-denied.
+    - Older Safari throws synchronously from `requestPermission`
+      instead of returning a rejected promise; wrapped in
+      try/catch and treated as 'denied'.
+    - Some Safari / WebView environments expose `Notification` as
+      a value but the static `requestPermission` is missing — the
+      `notificationsSupported()` guard handles that.
+  - **Bundle delta**: entry chunk +12.81 kB raw / +3.70 kB gzip
+    (notifications + alertsRunner + ToastContainer + the App
+    effect + the LazyAlertsPanel wrapper). New AlertsPanel lazy
+    chunk: 10.61 kB raw / 3.63 kB gzip + 5.84 kB CSS / 1.32 kB
+    gzip. Total: ~28.4 kB raw / ~9.97 kB gzip across entry +
+    lazy chunk + CSS. Tests: 302 (up from 294).
+
 - **Pairwise correlation matrix panel.** New Correlations panel in
   Portfolio mode showing the 60-day rolling Pearson correlation of
   daily log returns across every configured position. Heat-map by

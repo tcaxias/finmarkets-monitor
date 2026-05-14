@@ -233,6 +233,40 @@ async function applyMigrations(fixture: FixtureDb): Promise<void> {
       PRIMARY KEY (ticker, dt)
     )
   `);
+
+  // v7 — alerts + alert_fires (alert rules + edge-triggered fire log).
+  // Mirrors the DDL in migrations.ts v7. See that file for the design
+  // notes (why two tables, why VARCHAR ids, what `last_state` means).
+  await fixture.query(`
+    CREATE TABLE IF NOT EXISTS alerts (
+      id VARCHAR PRIMARY KEY,
+      ticker VARCHAR NOT NULL,
+      metric VARCHAR NOT NULL,
+      operator VARCHAR NOT NULL,
+      threshold DOUBLE NOT NULL,
+      threshold_band_high DOUBLE,
+      enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      label VARCHAR,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_evaluated_at TIMESTAMP,
+      last_evaluated_value DOUBLE,
+      last_state VARCHAR
+    )
+  `);
+  await fixture.query(`
+    CREATE TABLE IF NOT EXISTS alert_fires (
+      id VARCHAR PRIMARY KEY,
+      alert_id VARCHAR NOT NULL,
+      fired_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      ticker VARCHAR NOT NULL,
+      metric VARCHAR NOT NULL,
+      observed_value DOUBLE NOT NULL,
+      threshold DOUBLE NOT NULL,
+      message VARCHAR NOT NULL,
+      acknowledged BOOLEAN NOT NULL DEFAULT FALSE,
+      FOREIGN KEY (alert_id) REFERENCES alerts(id)
+    )
+  `);
 }
 
 /**

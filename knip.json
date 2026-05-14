@@ -8,6 +8,7 @@
     "src/components/AnomaliesPanel.svelte",
     "src/components/CorrelationPanel.svelte",
     "src/components/BacktestPanel.svelte",
+    "src/components/AlertsPanel.svelte",
     "src/components/IndicatorsAbout.svelte"
   ],
   "project": [
