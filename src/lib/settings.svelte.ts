@@ -206,6 +206,17 @@ export interface ValidationError {
  * Validate a position's user-entered fields. Returns an array of errors;
  * empty array means valid. Callers should normalize ticker to uppercase
  * BEFORE calling — validation is strict about format.
+ *
+ * Only `ticker` is required. The vest/shares/tax fields are an OPTIONAL
+ * tax-tracking layer for users monitoring an RSU-style position with a
+ * known tax overhang; users who just want generic equity monitoring can
+ * leave them at 0/'' and downstream UI gracefully hides the
+ * Pcover/exit-framework features.
+ *
+ * Bounds checks still apply when a value IS provided:
+ *   - vestPrice / shares: must be >= 0 if non-zero (no negatives)
+ *   - taxRate: must be in [0, 1] if any value (zero = "not configured")
+ *   - taxDueDate: if non-empty, must be a valid YYYY-MM-DD calendar date
  */
 export function validatePosition(p: Omit<Position, 'id'>): ValidationError[] {
   const errors: ValidationError[] = [];
@@ -215,14 +226,23 @@ export function validatePosition(p: Omit<Position, 'id'>): ValidationError[] {
       message: 'Ticker must be 1-10 alphanumeric characters (uppercase).',
     });
   }
-  if (!Number.isFinite(p.vestPrice) || p.vestPrice <= 0) {
-    errors.push({ field: 'vestPrice', message: 'Vest price must be greater than 0.' });
+  if (!Number.isFinite(p.vestPrice) || p.vestPrice < 0) {
+    errors.push({
+      field: 'vestPrice',
+      message: 'Vest price must be 0 or greater (leave 0 if not tracking taxes).',
+    });
   }
-  if (!Number.isFinite(p.shares) || p.shares <= 0) {
-    errors.push({ field: 'shares', message: 'Shares must be greater than 0.' });
+  if (!Number.isFinite(p.shares) || p.shares < 0) {
+    errors.push({
+      field: 'shares',
+      message: 'Shares must be 0 or greater (leave 0 if not tracking taxes).',
+    });
   }
-  if (!Number.isFinite(p.taxRate) || p.taxRate <= 0 || p.taxRate >= 1) {
-    errors.push({ field: 'taxRate', message: 'Tax rate must be between 0 and 1 (exclusive).' });
+  if (!Number.isFinite(p.taxRate) || p.taxRate < 0 || p.taxRate > 1) {
+    errors.push({
+      field: 'taxRate',
+      message: 'Tax rate must be between 0 and 1 (inclusive).',
+    });
   }
   if (p.taxDueDate) {
     if (!isValidIsoDate(p.taxDueDate)) {
@@ -233,6 +253,16 @@ export function validatePosition(p: Omit<Position, 'id'>): ValidationError[] {
     }
   }
   return errors;
+}
+
+/**
+ * Whether a position has the optional tax-tracking layer configured.
+ * Used by UI components to decide whether to show Pcover, distance, and
+ * other RSU-specific framing — none of which makes sense without a
+ * non-zero vest price + shares + tax rate.
+ */
+export function hasTaxTracking(p: Position): boolean {
+  return p.vestPrice > 0 && p.shares > 0 && p.taxRate > 0;
 }
 
 /**

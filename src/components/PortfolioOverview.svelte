@@ -284,13 +284,15 @@
               <td class="mono day-change" data-direction={dayDir(row.dayChangePct)}>
                 {fmtPct(row.dayChangePct)}
               </td>
-              <td class="mono">{fmtPrice(row.pcover)}</td>
+              <td class="mono">{row.pcover > 0 ? fmtPrice(row.pcover) : '—'}</td>
               <td class="mono distance" data-tone={row.distanceTone}>
-                {fmtDistance(row.distance)}
-                {#if row.distance !== null}
+                {#if row.pcover > 0 && row.distance !== null}
+                  {fmtDistance(row.distance)}
                   <span class="cushion-tag">
                     {row.distance >= 0 ? 'cushion' : 'underwater'}
                   </span>
+                {:else}
+                  —
                 {/if}
               </td>
               <td class="conviction-cell">

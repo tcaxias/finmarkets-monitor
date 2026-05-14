@@ -33,6 +33,9 @@
   let formTaxRate = $state(0.45);
   let formTaxDueDate = $state('');
   let formErrors = $state<ValidationError[]>([]);
+  // Whether the optional tax-tracking subsection is expanded. Auto-opens
+  // when editing a position that already has tax fields populated.
+  let taxOpen = $state(false);
 
   // Auto-collapse when at least one position exists; if empty the panel
   // stays open so first-time users can see the "Add Position" button
@@ -56,6 +59,7 @@
     formTaxRate = 0.45;
     formTaxDueDate = '';
     formErrors = [];
+    taxOpen = false;
     editingId = NEW_ROW;
   }
 
@@ -66,6 +70,9 @@
     formTaxRate = p.taxRate;
     formTaxDueDate = p.taxDueDate;
     formErrors = [];
+    // Auto-expand the optional section if the position already has any
+    // tax fields populated, so the user can see what they entered.
+    taxOpen = p.vestPrice > 0 || p.shares > 0 || p.taxDueDate !== '';
     editingId = p.id;
   }
 
@@ -75,16 +82,29 @@
   }
 
   function commitForm(): void {
+    // Coerce numeric form fields with NaN-safe fallback. <input type=number>
+    // and <input type=range> with bind:value can produce NaN if the field
+    // was emptied, which would silently fail validation with "must be
+    // finite" — fall back to 0 so the validation message is meaningful.
+    const num = (v: unknown): number => {
+      const n = typeof v === 'number' ? v : Number(v);
+      return Number.isFinite(n) ? n : 0;
+    };
     const candidate: Omit<Position, 'id'> = {
       ticker: formTicker.trim().toUpperCase(),
-      vestPrice: Number(formVestPrice),
-      shares: Number(formShares),
-      taxRate: Number(formTaxRate),
+      vestPrice: num(formVestPrice),
+      shares: num(formShares),
+      taxRate: num(formTaxRate),
       taxDueDate: formTaxDueDate,
     };
     const errors = validatePosition(candidate);
     if (errors.length > 0) {
       formErrors = errors;
+      // Auto-expand the tax section if any error is in those fields, so
+      // the user can see the inline error message.
+      if (errors.some((e) => e.field !== 'ticker')) {
+        taxOpen = true;
+      }
       return;
     }
     if (editingId === NEW_ROW) {
@@ -177,9 +197,9 @@
             {#each settings.positions as pos (pos.id)}
               <tr>
                 <td class="mono">{pos.ticker}</td>
-                <td class="mono">{formatUsd(pos.vestPrice)}</td>
-                <td class="mono">{pos.shares}</td>
-                <td class="mono">{(pos.taxRate * 100).toFixed(0)}%</td>
+                <td class="mono">{pos.vestPrice > 0 ? formatUsd(pos.vestPrice) : '—'}</td>
+                <td class="mono">{pos.shares > 0 ? pos.shares : '—'}</td>
+                <td class="mono">{pos.taxRate > 0 ? `${(pos.taxRate * 100).toFixed(0)}%` : '—'}</td>
                 <td class="mono">{pos.taxDueDate || '—'}</td>
                 <td class="actions-cell">
                   <button type="button" class="ghost-sm" onclick={() => startEdit(pos)}>
@@ -204,7 +224,7 @@
           <h3>{editingId === NEW_ROW ? 'New position' : 'Edit position'}</h3>
 
           <label>
-            <span>Ticker</span>
+            <span>Ticker <span class="req">*</span></span>
             <input
               type="text"
               bind:value={formTicker}
@@ -215,35 +235,47 @@
             {#if errorFor('ticker')}<span class="field-error">{errorFor('ticker')}</span>{/if}
           </label>
 
-          <label>
-            <span>Vest price (USD)</span>
-            <input type="number" step="0.01" min="0" bind:value={formVestPrice} />
-            {#if errorFor('vestPrice')}<span class="field-error">{errorFor('vestPrice')}</span>{/if}
-          </label>
+          <details class="tax-tracking" bind:open={taxOpen}>
+            <summary>
+              <span class="tax-toggle">Tax tracking (optional)</span>
+              <span class="tax-hint">
+                For RSU positions with a known tax overhang. Leave collapsed for
+                generic equity monitoring.
+              </span>
+            </summary>
 
-          <label>
-            <span>Shares</span>
-            <input type="number" step="any" min="0" bind:value={formShares} />
-            {#if errorFor('shares')}<span class="field-error">{errorFor('shares')}</span>{/if}
-          </label>
+            <div class="tax-fields">
+              <label>
+                <span>Vest price (USD)</span>
+                <input type="number" step="0.01" min="0" bind:value={formVestPrice} />
+                {#if errorFor('vestPrice')}<span class="field-error">{errorFor('vestPrice')}</span>{/if}
+              </label>
 
-          <label>
-            <span>Tax rate ({(formTaxRate * 100).toFixed(1)}%)</span>
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step="0.005"
-              bind:value={formTaxRate}
-            />
-            {#if errorFor('taxRate')}<span class="field-error">{errorFor('taxRate')}</span>{/if}
-          </label>
+              <label>
+                <span>Shares</span>
+                <input type="number" step="any" min="0" bind:value={formShares} />
+                {#if errorFor('shares')}<span class="field-error">{errorFor('shares')}</span>{/if}
+              </label>
 
-          <label>
-            <span>Tax due date</span>
-            <input type="date" bind:value={formTaxDueDate} />
-            {#if errorFor('taxDueDate')}<span class="field-error">{errorFor('taxDueDate')}</span>{/if}
-          </label>
+              <label>
+                <span>Tax rate ({(formTaxRate * 100).toFixed(1)}%)</span>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.005"
+                  bind:value={formTaxRate}
+                />
+                {#if errorFor('taxRate')}<span class="field-error">{errorFor('taxRate')}</span>{/if}
+              </label>
+
+              <label>
+                <span>Tax due date</span>
+                <input type="date" bind:value={formTaxDueDate} />
+                {#if errorFor('taxDueDate')}<span class="field-error">{errorFor('taxDueDate')}</span>{/if}
+              </label>
+            </div>
+          </details>
 
           <div class="form-actions">
             <button type="button" onclick={commitForm}>Save</button>
@@ -506,6 +538,73 @@
     display: flex;
     gap: 8px;
     margin-top: 6px;
+  }
+
+  /* Required-field marker on the ticker label. */
+  .req {
+    color: #fca5a5;
+    margin-left: 2px;
+  }
+
+  /* Optional tax-tracking subsection: collapsed by default, expandable
+     for users who want the Pcover/exit-framework features. Designed to
+     feel secondary so generic equity monitoring is the primary path. */
+  .tax-tracking {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 0;
+    background: rgba(0, 0, 0, 0.15);
+  }
+
+  .tax-tracking > summary {
+    padding: 8px 12px;
+    cursor: pointer;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    user-select: none;
+  }
+
+  .tax-tracking > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .tax-tracking > summary::before {
+    content: '▸';
+    color: var(--muted);
+    font-size: 10px;
+    margin-right: 6px;
+    display: inline-block;
+    transition: transform 0.15s ease;
+  }
+
+  .tax-tracking[open] > summary::before {
+    transform: rotate(90deg);
+  }
+
+  .tax-tracking > summary:hover {
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .tax-toggle {
+    color: var(--text);
+    font-weight: 500;
+    font-size: 13px;
+  }
+
+  .tax-hint {
+    color: var(--muted);
+    font-size: 11px;
+    margin-left: 16px;
+  }
+
+  .tax-fields {
+    padding: 10px 12px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    border-top: 1px solid var(--border);
   }
 
   .hint {

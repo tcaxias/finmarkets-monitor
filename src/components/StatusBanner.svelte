@@ -165,20 +165,22 @@
       </span>
     {/if}
 
-    <span class="sep" aria-hidden="true"></span>
+    {#if thresholds.pcover > 0}
+      <span class="sep" aria-hidden="true"></span>
 
-    <span class="block">
-      <span class="block-label">Pcover</span>
-      <span class="block-value" data-tone={pcoverState.tone}>
-        {fmtPrice(thresholds.pcover)}
-        {#if pcoverState.cushion !== null}
-          <span class="cushion">
-            ({pcoverState.cushion >= 0 ? '+' : '−'}${Math.abs(pcoverState.cushion).toFixed(2)}
-            {pcoverState.cushion >= 0 ? 'cushion' : 'underwater'})
-          </span>
-        {/if}
+      <span class="block">
+        <span class="block-label">Pcover</span>
+        <span class="block-value" data-tone={pcoverState.tone}>
+          {fmtPrice(thresholds.pcover)}
+          {#if pcoverState.cushion !== null}
+            <span class="cushion">
+              ({pcoverState.cushion >= 0 ? '+' : '−'}${Math.abs(pcoverState.cushion).toFixed(2)}
+              {pcoverState.cushion >= 0 ? 'cushion' : 'underwater'})
+            </span>
+          {/if}
+        </span>
       </span>
-    </span>
+    {/if}
 
     <span class="sep" aria-hidden="true"></span>
 

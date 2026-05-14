@@ -126,34 +126,53 @@ describe('validatePosition', () => {
     ]);
   });
 
-  it('rejects negative or zero vest price', () => {
-    expect(validatePosition({ ...valid(), vestPrice: 0 })).toEqual([
-      expect.objectContaining({ field: 'vestPrice' }),
-    ]);
+  // vest/shares/taxRate are now OPTIONAL (zero = "not configured").
+  // Generic equity monitoring needs only a ticker; the tax overhang
+  // framework is for users who explicitly want it.
+  it('accepts zero vest price (means "not tracking taxes")', () => {
+    expect(validatePosition({ ...valid(), vestPrice: 0 })).toEqual([]);
+  });
+
+  it('rejects negative vest price', () => {
     expect(validatePosition({ ...valid(), vestPrice: -1 })).toEqual([
       expect.objectContaining({ field: 'vestPrice' }),
     ]);
   });
 
-  it('rejects negative or zero shares', () => {
-    expect(validatePosition({ ...valid(), shares: 0 })).toEqual([
-      expect.objectContaining({ field: 'shares' }),
-    ]);
+  it('accepts zero shares (means "not tracking taxes")', () => {
+    expect(validatePosition({ ...valid(), shares: 0 })).toEqual([]);
+  });
+
+  it('rejects negative shares', () => {
     expect(validatePosition({ ...valid(), shares: -5 })).toEqual([
       expect.objectContaining({ field: 'shares' }),
     ]);
   });
 
-  it('rejects tax rate at the boundaries (0 and 1) — must be exclusive', () => {
-    expect(validatePosition({ ...valid(), taxRate: 0 })).toEqual([
-      expect.objectContaining({ field: 'taxRate' }),
-    ]);
-    expect(validatePosition({ ...valid(), taxRate: 1 })).toEqual([
-      expect.objectContaining({ field: 'taxRate' }),
-    ]);
+  it('accepts tax rate of 0 or 1 (boundary inclusive)', () => {
+    expect(validatePosition({ ...valid(), taxRate: 0 })).toEqual([]);
+    expect(validatePosition({ ...valid(), taxRate: 1 })).toEqual([]);
+  });
+
+  it('rejects tax rate outside [0, 1]', () => {
     expect(validatePosition({ ...valid(), taxRate: -0.1 })).toEqual([
       expect.objectContaining({ field: 'taxRate' }),
     ]);
+    expect(validatePosition({ ...valid(), taxRate: 1.1 })).toEqual([
+      expect.objectContaining({ field: 'taxRate' }),
+    ]);
+  });
+
+  it('accepts a ticker-only position with all tax fields zero/empty', () => {
+    expect(
+      validatePosition({
+        ticker: 'AAPL',
+        vestPrice: 0,
+        shares: 0,
+        taxRate: 0,
+        taxDueDate: '',
+      }),
+    ).toEqual([]);
   });
 
   it('rejects an unparseable taxDueDate', () => {
