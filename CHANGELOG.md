@@ -5,6 +5,34 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Tooling (knip — unused-export detection)
+
+- **Added `knip` (v6.13.1) as a devDependency** with a project-tuned
+  `knip.json` (entry: `App.svelte` + `*.test.ts` + `*.integration.test.ts`;
+  project: `src/**/*.{ts,svelte,svelte.ts}`). Run via `npm run knip`.
+- **Cleaned up the baseline** the first scan surfaced — 13 unused
+  exports + 8 unused exported types, all confirmed dead by grep across
+  components, tests, and lib code:
+  - **Deleted entirely** (zero callers): `evalState` /  `EvalState` /
+    `dataState` re-export (evaluation.svelte.ts), `isPersistent` /
+    `query` (duckdb.ts), `daysUntil` (math.ts), `getCurrentSnapshot` /
+    `SnapshotRow` (queries.ts), `hasTaxTracking` (settings.svelte.ts).
+  - **Demoted `export` → module-private** (used internally only):
+    `refreshCooldownRemainingMs` / `refreshIntradayState` /
+    `refreshEarnings` (data.svelte.ts), `materializeRsi` /
+    `materializeMacd` (sqlIndicators.ts), `fetchOhlcv` / `EarningsEvent`
+    (twelvedata.ts), `FixtureRow` (duckdb-fixture.ts), `AnomalyColumn`
+    (anomalies.ts), `BacktestColumn` (backtest.ts), `ScreenColumn`
+    (screener.ts), `Verdict` (witnesses.ts).
+- **No bundle change.** All removed exports were dead-code-eliminated by
+  Vite already; the dist js stays at 579.43 kB. Tree-shaking made the
+  exports invisible at runtime — knip just lets us see them at
+  source-tree level.
+- **No test count change.** Still 269 tests across 18 files. None of
+  the removed exports had tests (they were dead before they were named).
+- **Going forward**, `npm run knip` exits 0; run it before any release
+  cut to catch new dead code as the project grows.
+
 ### Added (SQL parity-check affordance)
 
 - **VWAP(20) latest-value pill in the MACD panel header.** Was

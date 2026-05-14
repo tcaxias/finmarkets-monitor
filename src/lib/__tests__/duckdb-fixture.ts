@@ -33,7 +33,7 @@ import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api';
  * so test assertions can use plain JS numbers/strings without
  * special-casing DuckDB return types.
  */
-export type FixtureRow = Record<string, unknown>;
+type FixtureRow = Record<string, unknown>;
 
 export interface FixtureDb {
   conn: DuckDBConnection;

@@ -97,11 +97,15 @@ export interface PerTickerEval {
   earnings: EarningsEventRow[];
 }
 
-export interface EvalState {
+// Internal-only — consumers read per-ticker slices via `getEval(ticker)`
+// rather than touching the cache root directly. Keeping it un-exported
+// prevents components from accidentally subscribing to the whole
+// `byTicker` map (every ticker change would re-run their reactivity).
+interface EvalState {
   byTicker: Record<string, PerTickerEval>;
 }
 
-export const evalState = $state<EvalState>({
+const evalState = $state<EvalState>({
   byTicker: {},
 });
 
@@ -435,5 +439,4 @@ export async function recomputeAll(): Promise<void> {
   }
 }
 
-// Re-export dataState for convenience so consumers only import from one place.
-export { dataState };
+

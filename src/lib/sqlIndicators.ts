@@ -74,7 +74,11 @@ function assertSafeTicker(ticker: string): void {
  * resulting series can't leave stale tail rows from a prior, longer
  * fetch. Returns the number of rows written.
  */
-export async function materializeRsi(
+// Internal — callers go through `refreshIndicators` for the canonical
+// (period=14) refresh. Kept as a separate function so the test fixture
+// (`materializeRsiSql`) can pin the same SQL shape, but no module
+// imports it directly.
+async function materializeRsi(
   ticker: string,
   period: number = 14,
 ): Promise<number> {
@@ -169,7 +173,9 @@ export async function materializeRsi(
  * `indicators_macd` for that (ticker, fast, slow, signal). Returns the
  * number of rows written.
  */
-export async function materializeMacd(
+// Internal — same story as `materializeRsi`: external consumers call
+// `refreshIndicators` instead.
+async function materializeMacd(
   ticker: string,
   fastPeriod: number = 12,
   slowPeriod: number = 26,

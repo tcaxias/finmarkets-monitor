@@ -1,0 +1,11 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "src/App.svelte",
+    "src/**/*.test.ts",
+    "src/lib/__tests__/*.integration.test.ts"
+  ],
+  "project": [
+    "src/**/*.{ts,svelte,svelte.ts}"
+  ]
+}

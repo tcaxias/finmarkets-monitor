@@ -71,7 +71,9 @@ let lastRefreshAt = 0;
 const RATE_LIMIT_SPACING_MS = 8_000;
 const RATE_LIMIT_FREE_THRESHOLD = 7; // up to this many positions = no spacing
 
-export function refreshCooldownRemainingMs(): number {
+// Internal-only — exposed via the cooldown messaging in `refreshData` /
+// `refreshAll`. No external caller imports this directly.
+function refreshCooldownRemainingMs(): number {
   const elapsed = Date.now() - lastRefreshAt;
   return Math.max(0, REFRESH_COOLDOWN_MS - elapsed);
 }
@@ -311,7 +313,9 @@ async function insertIntradayRows(ticker: string, rows: IntradayRow[]): Promise<
  * Refresh `dataState.intraday*` fields for one ticker by re-querying
  * today's intraday row count and the latest fetch timestamp.
  */
-export async function refreshIntradayState(tickerArg?: string): Promise<void> {
+// Internal-only — called from `refreshIntradayData` after each fetch.
+// No external caller imports this directly.
+async function refreshIntradayState(tickerArg?: string): Promise<void> {
   await ensureSchema();
   const conn = await getConn();
   const tickers = tickerArg
@@ -496,7 +500,10 @@ const REFRESH_EARNINGS_TICKER_RE = /^[A-Z0-9]{1,10}$/;
  * re-fetches overwrite the prior row rather than producing duplicates.
  * Per-call cost: 1 Twelve Data API credit.
  */
-export async function refreshEarnings(ticker: string): Promise<void> {
+// Internal-only — called as best-effort from `refreshData`. The
+// integration test references it conceptually in a comment but does not
+// import the symbol; vitest exercises it through the data-refresh path.
+async function refreshEarnings(ticker: string): Promise<void> {
   const t = ticker.trim().toUpperCase();
   const apiKey = settings.apiKey.trim();
   if (!apiKey || !t) return;

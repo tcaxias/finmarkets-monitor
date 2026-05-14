@@ -218,10 +218,11 @@ function section1Tradeability(): string {
 // ---------- section 2: time-pressure ----------
 
 function section2TimePressure(inputs: ReviewInputs): string {
-  // Use `daysUntilFrom(reviewDate, ...)` not `daysUntil(...)` so the
-  // generated document is reproducible against the pinned review date —
-  // calling `daysUntil` would silently use `new Date()` and make the
-  // output depend on when the function ran.
+  // Use `daysUntilFrom(reviewDate, ...)` (pinned base date) so the
+  // generated document is reproducible. A `daysUntil(iso)` convenience
+  // wrapper used to exist that defaulted to `new Date()`; it was deleted
+  // precisely because it would silently make the output depend on when
+  // the function ran.
   const days =
     inputs.taxDueDate ? daysUntilFrom(inputs.reviewDate, inputs.taxDueDate) : NaN;
   const daysStr = Number.isFinite(days) ? `${days}` : '______';

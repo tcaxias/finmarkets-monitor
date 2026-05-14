@@ -260,7 +260,7 @@ export function computeConvictionSeries(
 
 // --- Example backtest queries ---
 
-export interface BacktestColumn {
+interface BacktestColumn {
   key: string;
   label: string;
   /**

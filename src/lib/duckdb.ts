@@ -41,13 +41,9 @@ let dbPromise: Promise<duckdb.AsyncDuckDB> | null = null;
 let connPromise: Promise<duckdb.AsyncDuckDBConnection> | null = null;
 let schemaPromise: Promise<void> | null = null;
 
-// Whether the active database persists across reloads (OPFS) or is volatile.
-// Re-exported as a getter so non-Svelte callers can still read it; the
-// Svelte-reactive source of truth is `runtimeState.isPersistent` from
-// runtimeState.svelte.ts.
-export function isPersistent(): boolean {
-  return runtimeState.isPersistent;
-}
+// Persistence status (OPFS vs in-memory) lives on
+// `runtimeState.isPersistent`. Components read it reactively from
+// runtimeState.svelte.ts directly — no wrapper needed here.
 
 function opfsAvailable(): boolean {
   // OPFS lives on navigator.storage.getDirectory(). Some private-mode browsers
@@ -164,13 +160,6 @@ export async function ensureSchema(
  */
 export function resetSchemaMemo(): void {
   schemaPromise = null;
-}
-
-export async function query<T = Record<string, unknown>>(sql: string): Promise<T[]> {
-  const conn = await getConn();
-  const result = await conn.query(sql);
-  // toArray() returns Arrow rows; spread them into plain JS objects.
-  return result.toArray().map((row) => ({ ...row.toJSON() })) as T[];
 }
 
 export async function getVersion(): Promise<string> {

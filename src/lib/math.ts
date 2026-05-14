@@ -38,23 +38,16 @@ export function computeThresholds(
 }
 
 /**
- * Whole days between today (UTC) and the given ISO date (YYYY-MM-DD).
- * Returns NaN if the input is empty or unparseable, negative when overdue.
- *
- * For deterministic computation against a fixed reference date (e.g. in
- * unit tests or a Sunday-review generator that pins a `reviewDate`), use
- * `daysUntilFrom` instead.
- */
-export function daysUntil(isoDate: string): number {
-  return daysUntilFrom(new Date(), isoDate);
-}
-
-/**
  * Whole days from `baseDate` (UTC midnight) to `targetIso` (YYYY-MM-DD).
  * Negative when target is in the past. NaN when target is empty or
  * unparseable. Pinning the base date makes callers deterministic and
  * trivially testable — see `sundayReview.generateSundayReview` which
  * uses `inputs.reviewDate` to keep generated documents reproducible.
+ *
+ * (A `daysUntil(iso)` convenience wrapper that defaulted `baseDate` to
+ * `new Date()` once existed; it was removed because pinning the base
+ * date at every call site is the deterministic pattern we want, and the
+ * single non-test caller had migrated to `daysUntilFrom`.)
  */
 export function daysUntilFrom(baseDate: Date, targetIso: string): number {
   if (!targetIso) return NaN;

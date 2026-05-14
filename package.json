@@ -11,13 +11,15 @@
     "deploy:preview": "npm run build && wrangler pages deploy --branch=preview",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.app.json && tsc -p tsconfig.node.json",
-    "test": "vitest"
+    "test": "vitest",
+    "knip": "knip"
   },
   "devDependencies": {
     "@duckdb/node-api": "^1.5.2-r.1",
     "@sveltejs/vite-plugin-svelte": "^7.1.2",
     "@tsconfig/svelte": "^5.0.8",
     "@types/node": "^24.12.3",
+    "knip": "^6.13.1",
     "svelte": "^5.55.5",
     "svelte-check": "^4.4.8",
     "typescript": "~6.0.2",

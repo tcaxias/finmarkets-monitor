@@ -38,7 +38,7 @@ import type { Position } from './settings.svelte';
  *   - 'zscore' → 1-decimal z-score with severity colouring
  *                (yellow at ≥3, orange at ≥4, red at ≥5)
  */
-export interface AnomalyColumn {
+interface AnomalyColumn {
   key: string;
   label: string;
   format?: 'price' | 'pct' | 'number' | 'date' | 'string' | 'zscore';

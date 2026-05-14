@@ -275,16 +275,6 @@ export function validatePosition(p: Omit<Position, 'id'>): ValidationError[] {
 }
 
 /**
- * Whether a position has the optional tax-tracking layer configured.
- * Used by UI components to decide whether to show Pcover, distance, and
- * other RSU-specific framing — none of which makes sense without a
- * non-zero vest price + shares + tax rate.
- */
-export function hasTaxTracking(p: Position): boolean {
-  return p.vestPrice > 0 && p.shares > 0 && p.taxRate > 0;
-}
-
-/**
  * Strict ISO yyyy-mm-dd validation with calendar round-trip. Rejects
  * impossible dates that JS would otherwise normalize (e.g. Feb 30 → Mar 2).
  * Mirrors the pattern used by viewState.svelte.ts:isValidAsOf.

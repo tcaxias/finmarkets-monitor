@@ -412,18 +412,6 @@ export async function getIntradayVolumeBars(
   }
 }
 
-export interface SnapshotRow {
-  ticker: string;
-  /** ISO-8601 date ("YYYY-MM-DD") of the most recent bar. */
-  latestDt: string;
-  latestClose: number;
-  /** Close from the bar immediately preceding `latestDt`, or null if
-   *  this ticker has only one bar (no day-over-day delta computable). */
-  prevClose: number | null;
-  latestVolume: number | null;
-  rowCount: number;
-}
-
 export interface EarningsEventRow {
   /** ISO yyyy-mm-dd date string for table display. */
   dt: string;
@@ -498,31 +486,9 @@ export async function getEarnings(
   }
 }
 
-/**
- * One row per ticker with the latest OHLCV plus prev_close. Backed by the
- * `current_snapshot` view (migration v2). Lets PortfolioOverview render
- * the table without N round trips — a single query returns everything
- * the overview needs to compute day-over-day deltas.
- *
- * Currently unused by the UI; introduced as infrastructure for the
- * upcoming Screener panel and a future PortfolioOverview migration.
- */
-export async function getCurrentSnapshot(): Promise<SnapshotRow[]> {
-  const conn = await getConn();
-  const result = await conn.query(
-    `SELECT ticker, latest_dt, latest_close, prev_close, latest_volume, row_count
-     FROM current_snapshot
-     ORDER BY ticker`,
-  );
-  return result.toArray().map((row) => {
-    const r = row.toJSON() as Record<string, unknown>;
-    return {
-      ticker: String(r.ticker),
-      latestDt: formatDateValue(r.latest_dt),
-      latestClose: toNum(r.latest_close),
-      prevClose: r.prev_close == null ? null : toNum(r.prev_close),
-      latestVolume: toNullableNum(r.latest_volume),
-      rowCount: toNum(r.row_count),
-    };
-  });
-}
+// `getCurrentSnapshot` (a wrapper over the `current_snapshot` view from
+// migration v2) used to live here as infrastructure for the Screener
+// panel. It went unused — the Screener now reads `current_snapshot`
+// directly via its own query path — and was removed to keep this module
+// to "what the UI actually calls". The view itself is still maintained
+// by migrations (other call sites depend on it).

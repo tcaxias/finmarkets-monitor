@@ -23,7 +23,7 @@
 import type { Candle, MaPoint, VolumeBar } from './queries';
 import type { RsiPoint, MacdPoint } from './indicators';
 
-export type Verdict = 'bullish' | 'bearish' | 'neutral';
+type Verdict = 'bullish' | 'bearish' | 'neutral';
 
 export interface WitnessResult {
   verdict: Verdict;

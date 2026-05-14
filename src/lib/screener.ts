@@ -26,7 +26,7 @@ import { getConn } from './duckdb';
 import type { Position } from './settings.svelte';
 import { computeThresholds } from './math';
 
-export interface ScreenColumn {
+interface ScreenColumn {
   key: string;
   label: string;
   /**

@@ -155,7 +155,10 @@ async function fetchTimeSeries(
  * For intraday work prefer `fetchIntradayOhlcv` which returns the
  * timestamp under the `ts` field (avoids ambiguity at consumers).
  */
-export async function fetchOhlcv(
+// Internal — `fetchDailyOhlcv` (the public wrapper) is what callers
+// reach for. `fetchOhlcv` is only used here as the shared body of the
+// daily/intraday paths.
+async function fetchOhlcv(
   ticker: string,
   apiKey: string,
   outputsize = 500,
@@ -214,7 +217,10 @@ export async function fetchDailyOhlcv(
  * omits or empty-strings them when the report is unconfirmed
  * (estimate-only) or pre-release (no actual yet).
  */
-export interface EarningsEvent {
+// Used internally by `FetchEarningsResult`. Consumers receive
+// `EarningsEventRow` from queries.ts (the post-DB-insert shape) — the
+// raw Twelve Data event shape doesn't need to escape this module.
+interface EarningsEvent {
   /** ISO yyyy-mm-dd. The wire format may include a time component; we slice it off. */
   date: string;
   /** 'Before Market', 'After Market', or null when the source omitted the field. */
