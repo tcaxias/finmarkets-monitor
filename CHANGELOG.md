@@ -7,6 +7,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Cross-ticker Screener panel** — six predefined SQL screens grouped
+  into Momentum (Overbought RSI > 70, Oversold RSI < 30, MACD bullish
+  crossover in the last 5 days), Trend (below 20-day SMA, above 200-day
+  SMA), and Risk (approaching Pcover within 20%). Each screen is a
+  one-click button that JOINs the `current_snapshot` view (migration
+  v2) with the materialised indicator tables (migration v3) — the
+  headline DuckDB-leverage feature. Lives in Portfolio mode between
+  PortfolioOverview and PortfolioCharts. New `src/lib/screener.ts`
+  owns the `ScreenDefinition[]` catalog plus a `runScreen` executor;
+  new `src/components/ScreenerPanel.svelte` renders the trigger grid +
+  results table. The Pcover screen pushes per-position numeric data
+  into SQL via a `VALUES (...)` CTE, filtering tax-tracked positions
+  in SQL rather than post-filtering JS results. 27 new tests pin each
+  screen's SQL shape (live integration via the running app, since the
+  test harness has no DuckDB-WASM).
 - **RSI(14) and MACD(12,26,9) computed in DuckDB SQL** via recursive
   CTEs and materialised into new `indicators_rsi` and `indicators_macd`
   tables (migration v3). New `src/lib/sqlIndicators.ts` owns the write

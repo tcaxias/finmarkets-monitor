@@ -19,6 +19,7 @@
   import PositionTabs from './components/PositionTabs.svelte';
   import PortfolioOverview from './components/PortfolioOverview.svelte';
   import PortfolioCharts from './components/PortfolioCharts.svelte';
+  import ScreenerPanel from './components/ScreenerPanel.svelte';
   import PositionsPanel from './components/PositionsPanel.svelte';
   import DataPanel from './components/DataPanel.svelte';
   import WitnessPanel from './components/WitnessPanel.svelte';
@@ -188,6 +189,7 @@
       <a href="#status">Status</a>
       {#if !activePosition && settings.positions.length > 0}
         <a href="#overview">Overview</a>
+        <a href="#screener">Screener</a>
         <a href="#chart">Charts</a>
       {/if}
       {#if activePosition}
@@ -231,6 +233,9 @@
     {#if !activePosition}
       <section class="container wide stack" id="overview">
         <PortfolioOverview />
+      </section>
+      <section class="container wide stack" id="screener">
+        <ScreenerPanel />
       </section>
       <section class="container wide stack" id="chart">
         <PortfolioCharts />
