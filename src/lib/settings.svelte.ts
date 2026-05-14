@@ -53,6 +53,11 @@ export function genId(): string {
   return `${t}${r}`;
 }
 
+// ---------- validation regex (declared early so loadOrMigrate can use it) ----------
+
+/** Ticker validation: 1-10 alphanumeric chars after trim+uppercase. */
+const TICKER_RE = /^[A-Z0-9]{1,10}$/;
+
 // ---------- migration / load ----------
 
 interface LegacySettings {
@@ -119,9 +124,12 @@ export function loadOrMigrate(): SettingsState {
     const legacy = parsed as LegacySettings;
     const ticker = (legacy.ticker ?? '').trim().toUpperCase();
     const positions: Position[] = [];
-    // Only carry forward a position if there's a real ticker — an empty
-    // string would fail validation and just clutter the UI.
-    if (ticker) {
+    // Only carry forward a position if there's a real, well-shaped
+    // ticker. Empty would fail validation and just clutter the UI; a
+    // malformed ticker (e.g. 'BRK.B' from a legacy payload that
+    // pre-dated the strict regex) would later trip assertSafeTicker
+    // in the SQL layer and break the indicator path silently.
+    if (ticker && TICKER_RE.test(ticker)) {
       positions.push({
         id: genId(),
         ticker,
@@ -161,14 +169,26 @@ function numberOr(v: unknown, fallback: number): number {
 function isValidPosition(p: unknown): p is Position {
   if (!p || typeof p !== 'object') return false;
   const x = p as Record<string, unknown>;
-  return (
-    typeof x.id === 'string' &&
-    typeof x.ticker === 'string' &&
-    typeof x.vestPrice === 'number' &&
-    typeof x.shares === 'number' &&
-    typeof x.taxRate === 'number' &&
-    typeof x.taxDueDate === 'string'
-  );
+  if (
+    !(
+      typeof x.id === 'string' &&
+      typeof x.ticker === 'string' &&
+      typeof x.vestPrice === 'number' &&
+      typeof x.shares === 'number' &&
+      typeof x.taxRate === 'number' &&
+      typeof x.taxDueDate === 'string'
+    )
+  ) {
+    return false;
+  }
+  // Ticker shape check — same TICKER_RE that validatePosition uses, but
+  // applied here on the load path so a corrupted localStorage payload
+  // (manual edit, dev tools, malicious extension) can't smuggle a
+  // ticker like 'ab.cd' past us into the SQL layer where assertSafeTicker
+  // would throw at runtime. Silent filter rather than throw — load
+  // shouldn't fail catastrophically over one bad row.
+  if (!TICKER_RE.test(x.ticker as string)) return false;
+  return true;
 }
 
 // ---------- reactive store ----------
@@ -194,8 +214,7 @@ export function reset(): void {
 
 // ---------- validation ----------
 
-/** Ticker validation: 1-10 alphanumeric chars after trim+uppercase. */
-const TICKER_RE = /^[A-Z0-9]{1,10}$/;
+// TICKER_RE declared above (used by isValidPosition during loadOrMigrate).
 
 export interface ValidationError {
   field: 'ticker' | 'vestPrice' | 'shares' | 'taxRate' | 'taxDueDate';

@@ -203,23 +203,45 @@ export function computeConvictionSeries(
   // the witness functions only see bars at-or-before the current bar's
   // timestamp — this is the "as-of" simulation that makes the result
   // trustworthy as a backtest.
+  //
+  // Performance note: the per-iteration `.filter(p => p.time <= t)`
+  // pattern was O(N) per series per iteration, giving O(lookback × N)
+  // total. All series are sorted by time ascending (queries.ts and
+  // sqlIndicators.ts both `ORDER BY dt`), so a single forward pointer
+  // per series advances monotonically — O(N) total per series,
+  // O(N) overall. Same outputs, asymptotically faster as the lookback
+  // window grows. Tested against the prior implementation in
+  // backtest.test.ts (same conviction transitions on synthetic series).
   const startIdx = Math.max(0, candles.length - lookbackBars);
   const out: HistoricalConvictionPoint[] = [];
+
+  // Running pointers — each holds the count of entries with time <= t
+  // after the corresponding while-loop runs.
+  let sma20Idx = 0;
+  let sma200Idx = 0;
+  let volumeIdx = 0;
+  let rsiIdx = 0;
+  let macdIdx = 0;
+
   for (let i = startIdx; i < candles.length; i++) {
     const candle = candles[i];
     const t = candle.time;
 
-    // candles is monotonically time-ordered (ORDER BY dt in queries.ts),
-    // so slice(0, i+1) is correct without a time check. The other
-    // series may have different lengths (sma200 starts at bar 200,
-    // RSI starts at bar 15, etc.) but they're all monotonically time-
-    // ordered too, so a `.filter(time <= t)` is correct.
+    // Advance each series' pointer past entries whose time <= t. After
+    // the loop, each `*Idx` is the count of entries with time <= t.
+    // Series are time-sorted ascending so this never has to back up.
+    while (sma20Idx < sma20.length && sma20[sma20Idx].time <= t) sma20Idx++;
+    while (sma200Idx < sma200.length && sma200[sma200Idx].time <= t) sma200Idx++;
+    while (volumeIdx < volume.length && volume[volumeIdx].time <= t) volumeIdx++;
+    while (rsiIdx < rsi.length && rsi[rsiIdx].time <= t) rsiIdx++;
+    while (macdIdx < macd.length && macd[macdIdx].time <= t) macdIdx++;
+
     const candlesSlice = candles.slice(0, i + 1);
-    const sma20Slice = sma20.filter((p) => p.time <= t);
-    const sma200Slice = sma200.filter((p) => p.time <= t);
-    const volumeSlice = volume.filter((p) => p.time <= t);
-    const rsiSlice = rsi.filter((p) => p.time <= t);
-    const macdSlice = macd.filter((p) => p.time <= t);
+    const sma20Slice = sma20.slice(0, sma20Idx);
+    const sma200Slice = sma200.slice(0, sma200Idx);
+    const volumeSlice = volume.slice(0, volumeIdx);
+    const rsiSlice = rsi.slice(0, rsiIdx);
+    const macdSlice = macd.slice(0, macdIdx);
 
     const trend = evaluateTrend(candlesSlice, sma20Slice, sma200Slice);
     const vol = evaluateVolume(candlesSlice, volumeSlice);
@@ -295,7 +317,11 @@ export const BACKTEST_QUERIES: BacktestQueryDefinition[] = [
           AVG(close) OVER (
             PARTITION BY ticker ORDER BY dt
             ROWS BETWEEN 19 PRECEDING AND CURRENT ROW
-          ) AS value
+          ) AS value,
+          COUNT(*) OVER (
+            PARTITION BY ticker ORDER BY dt
+            ROWS BETWEEN 19 PRECEDING AND CURRENT ROW
+          ) AS w20
         FROM ohlcv
         WHERE ticker = ${quoteTicker(ticker)}
       )
@@ -306,6 +332,7 @@ export const BACKTEST_QUERIES: BacktestQueryDefinition[] = [
         ON r.ticker = s.ticker AND r.dt = s.dt AND r.period = 14
       WHERE EXTRACT('year' FROM s.dt) = 2025
         AND EXTRACT('dow' FROM s.dt) = 5  -- DuckDB: 0=Sunday, 5=Friday
+        AND s.w20 >= 20
         AND r.value > 50
         AND s.close > s.value
       ORDER BY s.dt

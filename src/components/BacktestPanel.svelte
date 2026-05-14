@@ -283,6 +283,10 @@
   let queryRows = $state<BacktestRow[]>([]);
   let queryState = $state<'idle' | 'loading' | 'ready' | 'error'>('idle');
   let queryError = $state<string>('');
+  // Bumped on every click so re-clicking the active query re-runs it
+  // (e.g. after a fresh data pull). Without this, the $effect would see
+  // no change in `activeQuery` and skip the re-run.
+  let queryNonce = $state(0);
 
   const activeQuery = $derived<BacktestQueryDefinition | null>(
     activeQueryId
@@ -302,6 +306,7 @@
   });
 
   $effect(() => {
+    void queryNonce; // dependency: re-run on re-click
     const q = activeQuery;
     const ticker = activeTicker;
     if (!q || !ticker) return;
@@ -309,14 +314,17 @@
     queryError = '';
     queryRows = [];
     const requestedId = q.id;
+    const myNonce = queryNonce;
     runBacktest(q, ticker)
       .then((rows) => {
-        if (activeQueryId !== requestedId) return; // stale
+        // Stale-response guard: ticker swap, query swap, or re-click
+        // (bumping queryNonce) all invalidate the in-flight response.
+        if (activeQueryId !== requestedId || queryNonce !== myNonce) return;
         queryRows = rows;
         queryState = 'ready';
       })
       .catch((err: unknown) => {
-        if (activeQueryId !== requestedId) return;
+        if (activeQueryId !== requestedId || queryNonce !== myNonce) return;
         queryError = err instanceof Error ? err.message : String(err);
         queryState = 'error';
       });
@@ -324,6 +332,7 @@
 
   function pickQuery(id: string): void {
     activeQueryId = id;
+    queryNonce += 1;
   }
 
   function clearQuery(): void {

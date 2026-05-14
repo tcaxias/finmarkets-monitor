@@ -5,6 +5,64 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed (DuckDB-leverage push review findings)
+
+- **Migration v4: backfill RSI(14) and MACD(12,26,9)** for tickers that
+  already have OHLCV in OPFS but no rows in the new `indicators_rsi` /
+  `indicators_macd` tables. Without this, existing OPFS users would see
+  empty indicator panes after upgrading to the v3 schema, and the only
+  fix was a manual "Refresh data" per ticker. Migration is idempotent
+  (no-op on fresh installs, no-op on subsequent boots) and self-contained
+  — the SQL mirrors `materializeRsi` / `materializeMacd` inline so a
+  future refactor of `sqlIndicators.ts` can't accidentally break the
+  migration's reproducibility.
+- **`clearCache` now drops `indicators_rsi` and `indicators_macd`.**
+  Previously the indicator tables persisted across "Clear cache",
+  leaving stale rows that wouldn't be regenerated until the next data
+  refresh. Drop order: view → indicators → base tables → `_meta`.
+- **`below-sma20` screener: partial-window guard.** Added the same
+  `COUNT(*) OVER (... 19 PRECEDING ...)` + `m.w >= 20` guard pattern
+  that `above-sma200` already uses. Without it, tickers with fewer
+  than 20 bars of history would surface a partial-window "SMA" that's
+  mathematically wrong. Same fix applied to the `bullish-fridays-2025`
+  backtest query (`s.w20 >= 20`).
+- **`readMacd` now takes `(fastPeriod, slowPeriod, signalPeriod)`**
+  with defaults 12 / 26 / 9 and includes them in the `WHERE` clause.
+  Previously it read any period set materialized for the ticker —
+  correct in practice (we only materialize 12/26/9) but would silently
+  corrupt output if a second period set were ever written. All existing
+  callers (`backtest.ts`, `evaluation.svelte.ts`) pass the same 3
+  arguments as before; the new period params take their defaults.
+- **Screener / Backtest / Anomalies panels: re-click re-runs the query.**
+  Added a `runNonce` / `queryNonce` counter that bumps on every button
+  click and is included as an effect dependency. Previously, clicking
+  the active screen/detector/query a second time was a no-op because
+  `activeScreenId` (etc.) didn't change. Stale-response guard tied to
+  the nonce too, so a re-click that completes after a faster re-click
+  doesn't overwrite the newer result.
+- **`settings.loadOrMigrate` validates tickers against `TICKER_RE`**
+  (`/^[A-Z0-9]{1,10}$/`) on the load path. Malformed tickers from a
+  corrupted localStorage payload (manual edit, malicious extension,
+  pre-strict legacy data) are silently filtered out instead of reaching
+  `sqlIndicators.assertSafeTicker` and throwing at runtime. Applied
+  to both `isValidPosition` (new-shape branch) and the legacy
+  single-ticker migration branch. New test in `settings.test.ts`.
+- **`computeConvictionSeries` running-pointer scan.** Replaced the
+  per-iteration `.filter(p => p.time <= t)` calls (each O(N)) with a
+  single forward pointer per series (each O(1) amortized). Total work
+  drops from O(lookback × N) to O(N) — same outputs (covered by
+  existing tests in `backtest.test.ts`), faster scaling for larger
+  lookback windows.
+
+### Deferred (out of scope for this commit)
+
+- **SQL strings still aren't executed in automated tests.** Real fix
+  needs DuckDB-WASM (or duckdb-node) in the test runner — separate
+  effort. Migration v4 SQL was manually verified against the live
+  deploy.
+- **CSS duplication between Screener and Anomalies panels** — pure
+  polish, not blocking.
+
 ### Added
 
 - **Cross-ticker Anomaly Detection panel** — three SQL-native detectors

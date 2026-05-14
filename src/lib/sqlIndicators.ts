@@ -367,12 +367,23 @@ export async function readMacd(
   ticker: string,
   asOf?: string | null,
   since?: string | null,
+  fastPeriod: number = 12,
+  slowPeriod: number = 26,
+  signalPeriod: number = 9,
 ): Promise<{ time: number; macd: number; signal: number; histogram: number }[]> {
   assertSafeTicker(ticker);
   const conn = await getConn();
 
   let where = `ticker = '${ticker}'`;
   const params: unknown[] = [];
+  // Period parameters are inlined integers (defaults come from the
+  // chart toolbar, not user input), safe to interpolate. Filtering by
+  // them is required: indicators_macd's primary key includes the period
+  // tuple, so a future second period set (e.g. MACD(5,35,5)) would
+  // otherwise be commingled into the read result.
+  where += ` AND fast_period = ${fastPeriod}`;
+  where += ` AND slow_period = ${slowPeriod}`;
+  where += ` AND signal_period = ${signalPeriod}`;
   if (asOf) {
     where += ` AND dt <= CAST(? AS DATE)`;
     params.push(asOf);

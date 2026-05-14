@@ -28,6 +28,11 @@
   let rows = $state<ScreenRow[]>([]);
   let runState = $state<'idle' | 'loading' | 'ready' | 'error'>('idle');
   let errorMsg = $state<string>('');
+  // Bumped on every click so re-clicking the active selection still
+  // re-runs the query. Without this, the $effect below would see no
+  // change in `activeScreen` and skip the re-run — annoying when the
+  // user added a position and wants to re-evaluate the same screen.
+  let runNonce = $state(0);
 
   const activeScreen = $derived<ScreenDefinition | null>(
     activeScreenId ? SCREENS.find((s) => s.id === activeScreenId) ?? null : null,
@@ -52,13 +57,16 @@
     risk: 'Risk',
   };
 
-  // Run the active screen whenever it changes. We intentionally don't
-  // re-run on settings.positions changes mid-result — the user clicked
-  // for a snapshot, and surprise re-runs would erase their place. Next
+  // Run the active screen whenever it changes OR runNonce bumps
+  // (re-click on the same selection). We intentionally don't re-run
+  // on settings.positions changes mid-result — the user clicked for a
+  // snapshot, and surprise re-runs would erase their place. Next
   // explicit click picks up the new positions.
   $effect(() => {
+    void runNonce; // dependency: re-run on re-click
     const screen = activeScreen;
     if (!screen) return;
+    const myNonce = runNonce;
     runState = 'loading';
     errorMsg = '';
     rows = [];
@@ -67,14 +75,15 @@
     const snapshot = settings.positions.slice();
     runScreen(screen, snapshot)
       .then((result) => {
-        // Stale-response guard: if the user clicked another screen
-        // while this one was running, drop the result silently.
-        if (activeScreenId !== screen.id) return;
+        // Stale-response guard: if the user clicked another screen OR
+        // re-clicked (bumping runNonce) while this one was running,
+        // drop the result silently.
+        if (activeScreenId !== screen.id || runNonce !== myNonce) return;
         rows = result;
         runState = 'ready';
       })
       .catch((err: unknown) => {
-        if (activeScreenId !== screen.id) return;
+        if (activeScreenId !== screen.id || runNonce !== myNonce) return;
         errorMsg = err instanceof Error ? err.message : String(err);
         runState = 'error';
       });
@@ -82,6 +91,7 @@
 
   function pick(id: string): void {
     activeScreenId = id;
+    runNonce += 1;
   }
 
   function clear(): void {

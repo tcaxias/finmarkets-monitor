@@ -462,6 +462,13 @@ export async function clearCache(): Promise<void> {
   // path to rebuild everything from version 0 — without it, `runMigrations`
   // would skip every step because `schema_version` still equals the latest.
   await conn.query('DROP VIEW IF EXISTS current_snapshot');
+  // Drop indicator tables before the ohlcv base table — they have no
+  // dependency on each other or on ohlcv (they're just keyed by ticker)
+  // but ordering them here keeps the intent explicit: derived tables
+  // first, base tables next, _meta last so the migrations system has
+  // to rebuild from scratch.
+  await conn.query('DROP TABLE IF EXISTS indicators_rsi');
+  await conn.query('DROP TABLE IF EXISTS indicators_macd');
   await conn.query('DROP TABLE IF EXISTS ohlcv');
   await conn.query('DROP TABLE IF EXISTS ohlcv_intraday');
   await conn.query('DROP TABLE IF EXISTS fetch_log');

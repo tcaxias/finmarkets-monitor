@@ -144,6 +144,7 @@ export const SCREENS: ScreenDefinition[] = [
           ticker,
           dt,
           AVG(close) OVER (PARTITION BY ticker ORDER BY dt ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) AS value,
+          COUNT(*) OVER (PARTITION BY ticker ORDER BY dt ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) AS w,
           ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY dt DESC) AS rn
         FROM ohlcv
       )
@@ -154,7 +155,7 @@ export const SCREENS: ScreenDefinition[] = [
         s.latest_close - m.value AS diff,
         100.0 * (s.latest_close - m.value) / m.value AS pct_below
       FROM current_snapshot s
-      JOIN sma20 m ON m.ticker = s.ticker AND m.rn = 1
+      JOIN sma20 m ON m.ticker = s.ticker AND m.rn = 1 AND m.w >= 20
       WHERE s.ticker IN (${tickerListSql(positions)}) AND s.latest_close < m.value
       ORDER BY pct_below ASC
     `,

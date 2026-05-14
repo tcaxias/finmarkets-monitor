@@ -29,6 +29,10 @@
   let rows = $state<AnomalyRow[]>([]);
   let runState = $state<'idle' | 'loading' | 'ready' | 'error'>('idle');
   let errorMsg = $state<string>('');
+  // Bumped on every click so re-clicking the active selection still
+  // re-runs the detector (e.g. after a fresh data pull). Without this,
+  // the $effect would see no change in `activeAnomaly` and skip.
+  let runNonce = $state(0);
 
   const activeAnomaly = $derived<AnomalyDefinition | null>(
     activeAnomalyId
@@ -55,12 +59,15 @@
     regime: 'Regime',
   };
 
-  // Run the active detector whenever it changes. We intentionally don't
-  // re-run on settings.positions changes mid-result — the user clicked
-  // for a snapshot, and surprise re-runs would erase their place.
+  // Run the active detector whenever it changes OR runNonce bumps
+  // (re-click on the same selection). We intentionally don't re-run on
+  // settings.positions changes mid-result — the user clicked for a
+  // snapshot, and surprise re-runs would erase their place.
   $effect(() => {
+    void runNonce; // dependency: re-run on re-click
     const anomaly = activeAnomaly;
     if (!anomaly) return;
+    const myNonce = runNonce;
     runState = 'loading';
     errorMsg = '';
     rows = [];
@@ -69,14 +76,15 @@
     const snapshot = settings.positions.slice();
     runAnomaly(anomaly, snapshot)
       .then((result) => {
-        // Stale-response guard: if the user clicked another detector
-        // while this one was running, drop the result silently.
-        if (activeAnomalyId !== anomaly.id) return;
+        // Stale-response guard: if the user clicked another detector OR
+        // re-clicked (bumping runNonce) while this one was running,
+        // drop the result silently.
+        if (activeAnomalyId !== anomaly.id || runNonce !== myNonce) return;
         rows = result;
         runState = 'ready';
       })
       .catch((err: unknown) => {
-        if (activeAnomalyId !== anomaly.id) return;
+        if (activeAnomalyId !== anomaly.id || runNonce !== myNonce) return;
         errorMsg = err instanceof Error ? err.message : String(err);
         runState = 'error';
       });
@@ -84,6 +92,7 @@
 
   function pick(id: string): void {
     activeAnomalyId = id;
+    runNonce += 1;
   }
 
   function clear(): void {

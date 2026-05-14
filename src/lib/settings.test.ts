@@ -314,6 +314,31 @@ describe('loadOrMigrate', () => {
     expect(s.positions[0].ticker).toBe('OK');
   });
 
+  // Defence-in-depth: a position with all the right keys but a ticker
+  // that fails TICKER_RE (e.g. one that snuck in from a pre-strict
+  // legacy payload, a manual localStorage edit, or a malicious browser
+  // extension) must be filtered out at load time so it never reaches
+  // sqlIndicators.assertSafeTicker (which would throw at runtime).
+  it('drops new-shape positions with malformed tickers', () => {
+    memStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        apiKey: '',
+        positions: [
+          { id: 'a', ticker: 'AAPL', vestPrice: 1, shares: 1, taxRate: 0.4, taxDueDate: '' },
+          // 'ab.cd' has a dot — fails /^[A-Z0-9]{1,10}$/ for two reasons
+          // (dot, lowercase). Either alone would also reject it.
+          { id: 'b', ticker: 'ab.cd', vestPrice: 1, shares: 1, taxRate: 0.4, taxDueDate: '' },
+          { id: 'c', ticker: 'TOO_LONG_TICKER_HERE', vestPrice: 1, shares: 1, taxRate: 0.4, taxDueDate: '' },
+        ],
+        activePositionId: 'a',
+      }),
+    );
+    const s = loadOrMigrate();
+    expect(s.positions.length).toBe(1);
+    expect(s.positions[0].ticker).toBe('AAPL');
+  });
+
   it('handles legacy payload with no ticker (only apiKey) — keeps key, no position', () => {
     memStorage.setItem(STORAGE_KEY, JSON.stringify({ apiKey: 'k', ticker: '' }));
     const s = loadOrMigrate();
