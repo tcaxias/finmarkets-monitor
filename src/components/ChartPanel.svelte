@@ -44,6 +44,11 @@
   import { computeThresholds, type Thresholds } from '../lib/math';
   import { getEval } from '../lib/evaluation.svelte';
   import { chartPrefs } from '../lib/chartPrefs.svelte';
+  import {
+    getVolumeProfile,
+    type VolumeProfile,
+    type VolumeProfileBucket,
+  } from '../lib/queries';
 
   // Optional `ticker` prop. When provided, this chart locks to that
   // ticker (used by PortfolioCharts to render one card per position).
@@ -72,6 +77,28 @@
 
   let hasData = $state(false);
   let loadError = $state<string | null>(null);
+
+  // Volume Profile overlay state.
+  //
+  // The profile is fetched in an $effect (gated on the toggle + slice
+  // having candles); the rendering is a Svelte template overlay
+  // positioned absolutely over the chart container's right edge,
+  // with each bar's Y coordinate resolved from the candle series'
+  // priceScale via `priceToCoordinate`.
+  //
+  // v1 SCOPE LIMITATION: the profile is computed once per slice
+  // change — it does NOT recompute when the user zooms or pans the
+  // chart's visible time range. The overlay therefore reflects the
+  // full slice window (whatever the timeframe toolbar selected),
+  // not whatever subrange the user has currently scrolled to. v2
+  // could subscribeVisibleTimeRangeChange() and recompute, but the
+  // SQL roundtrip per pan would need debouncing.
+  let volumeProfile = $state<VolumeProfile | null>(null);
+  // Bumped after each render so the priceToCoordinate-driven `y`
+  // computations can react to chart layout changes (resize, series
+  // add/remove). Without this the overlay computes once at fetch
+  // time and stale Y coords stick around through resizes.
+  let chartRenderTick = $state(0);
 
   // Resolve the position: explicit prop wins, fallback to active.
   // Touching settings.activePositionId / positions.length keeps the
@@ -251,6 +278,29 @@
     }
   }
 
+  /**
+   * Convert a unix-seconds time to an ISO yyyy-mm-dd date string.
+   * Used to build the volume-profile date window from the slice's
+   * first/last candle. UTC throughout to match the rest of the
+   * date-handling layer.
+   */
+  function timeToIsoDate(t: number): string {
+    return new Date(t * 1000).toISOString().slice(0, 10);
+  }
+
+  /**
+   * Resolve a bucket's Y pixel coordinate via the candle series'
+   * priceScale. Returns null when the price falls outside the
+   * currently-visible price range (priceToCoordinate returns null in
+   * that case) — caller skips the bucket rather than rendering at
+   * an undefined position.
+   */
+  function priceToY(price: number): number | null {
+    if (!candleSeries) return null;
+    const y = candleSeries.priceToCoordinate(price);
+    return y == null || !Number.isFinite(y) ? null : y;
+  }
+
   function ensureVolume(): void {
     if (!chart || volumeSeries) return;
     volumeSeries = chart.addSeries(HistogramSeries, {
@@ -343,6 +393,11 @@
 
     hasData = true;
     chart.timeScale().fitContent();
+    // Nudge the volume-profile overlay to re-resolve every bucket's Y
+    // coordinate. priceToCoordinate's mapping shifts whenever the
+    // visible price range changes (which happens on every setData /
+    // fitContent call), so the overlay must re-read after each render.
+    chartRenderTick++;
   }
 
   function clearPriceLines(): void {
@@ -445,6 +500,13 @@
       const entry = entries[0];
       if (entry && chart) {
         chart.applyOptions({ width: entry.contentRect.width });
+        // Width change shifts the chart's drawable area; the volume
+        // profile overlay's Y coords are still valid (priceScale didn't
+        // change) but the bar widths (computed as % of the overlay
+        // container) need a re-render. Bumping the tick is the
+        // simplest way to invalidate the $derived bucket-positions
+        // computation.
+        chartRenderTick++;
       }
     });
     resizeObserver.observe(chartContainer);
@@ -502,6 +564,129 @@
     }
   });
 
+  // Fetch the volume profile when the toggle is on AND there are
+  // candles to bin. Keyed by ticker + slice generation + the
+  // first/last candle dates so a refresh that changes the window
+  // (new bars landing, timeframe switch) re-fetches.
+  //
+  // Intraday slices are skipped — volume profile is a daily-bars
+  // institutional reference indicator; running it over 5-minute bars
+  // would produce a noisy histogram dominated by lunchtime micro-
+  // structure rather than meaningful price levels.
+  //
+  // Errors are swallowed silently (logged to console) — the overlay
+  // just hides itself by clearing `volumeProfile` to null. A failed
+  // VP fetch shouldn't crash the chart.
+  $effect(() => {
+    void chartPrefs.showVolumeProfile;
+    const _ticker = activePosition?.ticker ?? '';
+    const _gen = slice?.generation ?? 0;
+    const candles = slice?.candles ?? [];
+    const isIntraday = slice?.isIntraday ?? false;
+    void _ticker;
+    void _gen;
+
+    if (
+      !chartPrefs.showVolumeProfile ||
+      !activePosition ||
+      isIntraday ||
+      candles.length === 0
+    ) {
+      volumeProfile = null;
+      return;
+    }
+
+    const startDate = timeToIsoDate(candles[0].time);
+    const endDate = timeToIsoDate(candles[candles.length - 1].time);
+    const ticker = activePosition.ticker;
+    let cancelled = false;
+
+    void getVolumeProfile(ticker, startDate, endDate, 40)
+      .then((vp) => {
+        // Guard against a stale fetch landing after the user already
+        // switched to a different ticker / timeframe.
+        if (cancelled) return;
+        if (
+          activePosition?.ticker !== ticker ||
+          !chartPrefs.showVolumeProfile
+        ) {
+          return;
+        }
+        volumeProfile = vp;
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        // Don't surface to the chart's loadError banner — the rest of
+        // the chart is fine; just hide the overlay.
+        // eslint-disable-next-line no-console
+        console.warn('[ChartPanel] volume profile fetch failed:', err);
+        volumeProfile = null;
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  });
+
+  // Derived: the maximum bucket volume (used to scale bar widths).
+  // Re-runs whenever the profile changes; not chart-render-tick keyed
+  // because the max is a property of the data, not the layout.
+  const maxBucketVolume = $derived.by(() => {
+    if (!volumeProfile || volumeProfile.buckets.length === 0) return 0;
+    let m = 0;
+    for (const b of volumeProfile.buckets) {
+      if (b.totalVolume > m) m = b.totalVolume;
+    }
+    return m;
+  });
+
+  // Derived: per-bucket render data (Y coord, width %, isPoc).
+  // Buckets whose priceMid falls outside the visible price range get
+  // a null Y and are skipped in the template. Keyed implicitly on
+  // `chartRenderTick` via the `priceToY()` call which reads
+  // candleSeries' priceScale — but Svelte can't see that read, so
+  // we touch the tick explicitly to register the dependency.
+  interface VpBarRender {
+    bucket: VolumeProfileBucket;
+    y: number;
+    widthPct: number;
+    isPoc: boolean;
+  }
+  const volumeProfileBars = $derived.by((): VpBarRender[] => {
+    void chartRenderTick;
+    if (!volumeProfile || volumeProfile.buckets.length === 0) return [];
+    if (maxBucketVolume <= 0) return [];
+    const poc = volumeProfile.poc;
+    const out: VpBarRender[] = [];
+    for (const bucket of volumeProfile.buckets) {
+      const y = priceToY(bucket.priceMid);
+      if (y == null) continue;
+      // Widest bar = 25% of overlay container width (which is itself
+      // 30% of the chart container). Smaller buckets scale linearly
+      // with their volume share. Floor at a hairline so empty-but-
+      // present buckets aren't wholly invisible.
+      const widthPct = Math.max(
+        0.5,
+        (bucket.totalVolume / maxBucketVolume) * 25,
+      );
+      out.push({ bucket, y, widthPct, isPoc: poc !== null && bucket === poc });
+    }
+    return out;
+  });
+
+  /**
+   * Format a volume number for the bar tooltip. K / M / B suffixes
+   * keep the title text scannable — raw 1234567890 is unreadable at
+   * a glance.
+   */
+  function fmtVolume(v: number): string {
+    if (!Number.isFinite(v)) return '—';
+    if (v >= 1e9) return `${(v / 1e9).toFixed(2)}B`;
+    if (v >= 1e6) return `${(v / 1e6).toFixed(2)}M`;
+    if (v >= 1e3) return `${(v / 1e3).toFixed(1)}K`;
+    return String(Math.round(v));
+  }
+
   // Recompute price lines whenever any threshold input changes on the
   // active position OR the user toggles Pcover/Vest visibility.
   $effect(() => {
@@ -536,7 +721,24 @@
     {/if}
 
     <div class="chart-wrapper">
-      <div class="chart-container" bind:this={chartContainer}></div>
+      <div class="chart-container" bind:this={chartContainer}>
+        <!-- Volume Profile overlay. Sits inside the chart container
+             with pointer-events: none so it never intercepts hover or
+             click — the chart's crosshair, tooltip, and drag-to-pan
+             still work normally underneath the bars. -->
+        {#if chartPrefs.showVolumeProfile && volumeProfileBars.length > 0}
+          <div class="volume-profile-overlay" aria-hidden="true">
+            {#each volumeProfileBars as bar (bar.bucket.priceMid)}
+              <div
+                class="vp-bar"
+                class:poc={bar.isPoc}
+                style="top: {bar.y}px; width: {bar.widthPct}%"
+                title={`${bar.bucket.priceLow.toFixed(2)}–${bar.bucket.priceHigh.toFixed(2)}: ${fmtVolume(bar.bucket.totalVolume)} (${bar.bucket.barsCount} bars)`}
+              ></div>
+            {/each}
+          </div>
+        {/if}
+      </div>
 
       {#if !hasData}
         <div class="placeholder">
@@ -580,6 +782,57 @@
   .chart-container {
     width: 100%;
     height: 500px;
+    /* Required so the .volume-profile-overlay (position: absolute)
+       anchors to the chart bounds rather than escaping to .chart-wrapper
+       (which would mis-align the right edge against the price axis). */
+    position: relative;
+  }
+
+  /* Volume Profile overlay — horizontal bars on the right side of the
+     chart aligned with the price axis. The overlay container reserves
+     the rightmost 30% of the chart width; individual bars are right-
+     aligned within that band so the longest bar (POC) extends furthest
+     into the chart, mirroring the visual convention used by every
+     trading platform's volume-profile rendering. */
+  .volume-profile-overlay {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 30%;
+    /* Critical: never intercept chart interactions. The chart's
+       crosshair and pan handlers must reach the canvas underneath. */
+    pointer-events: none;
+    /* Above the chart canvas (which is z-index: auto inside its own
+       stacking context) but below any future hover popovers. */
+    z-index: 1;
+  }
+  .vp-bar {
+    position: absolute;
+    right: 0;
+    /* Slightly translucent so price candles remain visible through
+       the bars; matches the VWAP series' purple for visual coherence
+       (see COLORS.vwap in the script). */
+    background: rgba(155, 89, 182, 0.32);
+    border-right: 2px solid rgba(155, 89, 182, 0.75);
+    /* Bar height — tall enough that 40 buckets across a 500px chart
+       (~12.5px/bucket) don't leave gaps, but short enough that the
+       horizontal bars read as discrete levels. */
+    height: 8px;
+    /* Center the bar vertically on its priceMid coordinate. Without
+       this the top-edge alignment makes the bars visually drift
+       upward relative to the implied price level. */
+    transform: translateY(-4px);
+    /* Avoid the default rounded-rectangle look — these are price-
+       level histogram bars, not pill-shaped chips. */
+    border-radius: 1px;
+  }
+  .vp-bar.poc {
+    /* Point of Control highlighted in amber (same hue as Pcover+20%)
+       to make it pop against the purple field. The POC is the most
+       institutionally-meaningful single bar, so it gets the eye. */
+    background: rgba(245, 158, 11, 0.45);
+    border-right-color: rgba(245, 158, 11, 0.95);
   }
 
   .placeholder {

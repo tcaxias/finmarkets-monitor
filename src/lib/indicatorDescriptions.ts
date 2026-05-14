@@ -43,6 +43,11 @@ export const INDICATOR_DESCRIPTIONS = {
     description:
       '20-day Volume-Weighted Average Price. Like a simple moving average, but weights each bar by its volume — high-volume days count more. Often used as a "fair value" reference: price above VWAP suggests buyers are willing to pay above the volume-weighted consensus, price below suggests selling pressure dominating. Differs from SMA in that low-volume bars (typical of holidays, summer doldrums) contribute less to the average.',
   },
+  volumeProfile: {
+    label: 'Volume Profile (right-edge histogram)',
+    description:
+      '40-bucket horizontal volume histogram on the right side of the chart. Each bar shows total volume that traded at that price level over the visible window. The longest bar (amber) is the Point of Control (POC) — the most-traded price; other bars are in the same purple as VWAP for visual coherence. Identifies high-volume support/resistance zones that aren\'t visible from price action alone — institutions defend levels where they accumulated size, and POCs often act as magnets on subsequent retests.',
+  },
   rsi: {
     label: 'RSI(14)',
     description:

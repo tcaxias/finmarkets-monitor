@@ -7,6 +7,82 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Volume Profile overlay (horizontal bars on right side of chart).**
+  Adds a 40-bucket horizontal volume histogram on the right edge of
+  the price chart showing total volume traded at each price level
+  over the visible window. The longest bar (amber) is the Point of
+  Control (POC) — the most-traded price; other bars are in the same
+  purple as VWAP for visual coherence. Identifies high-volume
+  support/resistance zones that aren't visible from price action
+  alone — institutions defend levels where they accumulated size,
+  and POCs often act as magnets on subsequent retests.
+  - **New `getVolumeProfile()` query** in `src/lib/queries.ts`. Two-
+    pass DuckDB query: first pass finds the close-price range with
+    `MIN(close)` / `MAX(close)` (NULL-volume bars excluded); second
+    pass bins each bar's close into one of `bucketCount` (default 40)
+    equal-width buckets via `LEAST/GREATEST(0, FLOOR((close - lo) /
+    bucketWidth))` with the clamp guarding the close == hi edge case.
+    Returns buckets, totalVolume, barsAnalyzed, and the POC
+    (highest-volume bucket). Empty profile for empty range; empty
+    profile + barsAnalyzed for the single-price degenerate case
+    (UI can disambiguate "no data" from "single price"). Ticker
+    validated against TICKER_RE (defense in depth on top of upstream
+    checks); bucketCount validated to [2, 200].
+  - **Single-bar attribution.** Each bar's full volume goes into the
+    bucket containing its close. Simpler than TPO-style "split by
+    traversed range" attribution which would distribute volume
+    across every bin between low and high — the latter is an order
+    of magnitude more complex and gives qualitatively similar
+    results for daily bars. Documented in the helper.
+  - **Overlay implementation choice — div instead of Lightweight
+    Charts custom series API.** Renders as `<div class="vp-bar">`
+    elements absolutely positioned inside the `.chart-container`
+    (which now `position: relative`), with each bar's Y coordinate
+    resolved via `candleSeries.priceToCoordinate(priceMid)`.
+    Off-screen prices return null from priceToCoordinate; those
+    buckets are gracefully skipped rather than rendered at undefined
+    positions. The overlay is `pointer-events: none` so it never
+    intercepts crosshair, hover, or pan/zoom interactions on the
+    underlying chart canvas. Width: bars are right-aligned in a
+    30%-of-chart-width band; widest bar (POC) = 25% of the band,
+    others scale linearly with their `totalVolume / maxBucketVolume`.
+    Why div over `addCustomSeries(ICustomSeriesPaneView)`: simpler,
+    smaller LOC, visually indistinguishable for the user; we get
+    price-axis alignment "for free" via priceToCoordinate.
+  - **chartPrefs entry: `showVolumeProfile`** (default `false` — it's
+    an additional overlay, not a core series; users opt in for
+    high-volume support/resistance reference). Persisted to
+    localStorage like every other prefs flag; rehydration covered
+    by the existing chartPrefs.test.ts suite.
+  - **Toolbar toggle: `VolProfile`** in `ChartToolbar.svelte`,
+    grouped after VWAP since both are volume-weighted overlays
+    typically toggled together. Daily-only (intraday slice has no
+    meaningful "where did volume trade at this price level" signal
+    — it'd just show lunchtime micro-structure).
+  - **`indicatorDescriptions.ts`**: new `volumeProfile` entry powers
+    both the toolbar tooltip and the IndicatorsAbout dl entry. Stays
+    in sync via the single-source-of-truth pattern.
+  - **v1 SCOPE LIMITATIONS (documented inline):** the profile is
+    computed once per slice change — it does NOT recompute when the
+    user zooms or pans the chart's visible time range. The overlay
+    therefore reflects the full slice window (whatever the timeframe
+    toolbar selected), not whatever subrange the user has currently
+    scrolled to. v2 work would `subscribeVisibleTimeRangeChange()`
+    and recompute, but the SQL roundtrip per pan needs debouncing.
+    Single-price degenerate case returns empty profile (no buckets);
+    fetch failures hide the overlay silently rather than crashing
+    the chart (logged to console.warn).
+  - **Cancellation guard.** The fetch effect tracks a `cancelled`
+    flag in its return-cleanup so a stale VP fetch landing after
+    the user switched ticker / timeframe doesn't paint stale buckets
+    onto the new chart.
+  - **6 integration tests** in
+    `src/lib/__tests__/volumeProfile.integration.test.ts` covering
+    full price-range coverage + total-volume conservation, POC
+    identification with a 50× loaded bucket, empty-range and
+    single-price degenerate cases, NULL-volume exclusion (extreme-
+    price NULL-volume bar must not widen the range), and the
+    close == hi edge clamp. 302 → 308 tests passing.
 - **Alerts: DuckDB-persisted rules + edge-triggered evaluation +
   toasts + browser notifications.** Turns the app from passive
   monitoring to active. Users define alert rules ("FIVN close crosses

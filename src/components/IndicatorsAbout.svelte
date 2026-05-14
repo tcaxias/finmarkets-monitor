@@ -17,6 +17,7 @@
     'sma50',
     'sma200',
     'vwap',
+    'volumeProfile',
     'earnings',
     'rsi',
     'macd',

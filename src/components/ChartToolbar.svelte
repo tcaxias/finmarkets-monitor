@@ -36,6 +36,7 @@
     | 'showSma50'
     | 'showSma200'
     | 'showVwap'
+    | 'showVolumeProfile'
     | 'showVolume'
     | 'showPcoverLines'
     | 'showVestLine'
@@ -56,6 +57,15 @@
     { key: 'showSma50', short: 'SMA50', indicator: 'sma50', dailyOnly: true },
     { key: 'showSma200', short: 'SMA200', indicator: 'sma200', dailyOnly: true },
     { key: 'showVwap', short: 'VWAP', indicator: 'vwap', dailyOnly: true },
+    // Volume Profile — daily-only. Grouped after VWAP because both
+    // are volume-weighted overlays; users typically toggle them
+    // together when investigating where institutional size traded.
+    {
+      key: 'showVolumeProfile',
+      short: 'VolProfile',
+      indicator: 'volumeProfile',
+      dailyOnly: true,
+    },
     // Earnings markers — daily-only (intraday slice has earnings = []).
     // Grouped with the trend overlays here because they're a price-axis
     // annotation in the same conceptual band as the moving averages.

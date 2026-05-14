@@ -671,6 +671,189 @@ export async function getVolatilityRegimes(): Promise<VolatilityRow[]> {
   });
 }
 
+export interface VolumeProfileBucket {
+  /** Bottom edge of this price bucket (inclusive). */
+  priceLow: number;
+  /** Top edge of this price bucket (exclusive, except the last bucket). */
+  priceHigh: number;
+  /** Center price — used for label / Y-axis positioning in the overlay. */
+  priceMid: number;
+  /** Sum of `volume` from all bars whose close fell into this bucket. */
+  totalVolume: number;
+  /** How many ohlcv bars contributed to this bucket. */
+  barsCount: number;
+}
+
+export interface VolumeProfile {
+  buckets: VolumeProfileBucket[];
+  /** Bucket with the highest `totalVolume` — the Point of Control. */
+  poc: VolumeProfileBucket | null;
+  totalVolume: number;
+  barsAnalyzed: number;
+}
+
+/**
+ * Compute the volume profile for `ticker` over `[startDate, endDate]`.
+ *
+ * Bins the close-price range observed in the window into `bucketCount`
+ * equal-width buckets, then sums `volume` per bucket. Bars with NULL
+ * volume are excluded entirely (they'd contribute nothing meaningful to
+ * a "where did money change hands" picture).
+ *
+ * Single-bar attribution: each bar's volume is fully attributed to the
+ * bucket containing its close. This is the simplest model — TPO-style
+ * "split by traversed range" attribution would distribute volume across
+ * every bin between low and high, but is an order of magnitude more
+ * complex (DuckDB needs a generate_series cross-join) and gives
+ * qualitatively similar results for daily bars.
+ *
+ * Returns an empty profile (`{ buckets: [], poc: null, ... }`) when:
+ *   - there's no data for the ticker in the window
+ *   - all bars have the same close (degenerate single-price case where
+ *     `hi - lo == 0` and bucket width would be zero — meaningful
+ *     bucketing is impossible). The `barsAnalyzed` count is still
+ *     surfaced so the UI can disambiguate "no data" from "single price".
+ *
+ * The price range (`lo`/`hi`/`bucketWidth`) is inlined into the second
+ * query because they're computed numbers we just derived; bind params
+ * inside the FLOOR expression would force DuckDB to re-plan per-row
+ * and offer no safety win since the values are server-derived doubles.
+ * Ticker and dates are still bound as parameters (defense in depth on
+ * top of the upstream TICKER_RE check).
+ */
+export async function getVolumeProfile(
+  ticker: string,
+  startDate: string,
+  endDate: string,
+  bucketCount: number = 40,
+): Promise<VolumeProfile> {
+  if (!/^[A-Z0-9]{1,10}$/.test(ticker)) {
+    throw new Error(`getVolumeProfile: unsafe ticker '${ticker}'`);
+  }
+  if (!Number.isInteger(bucketCount) || bucketCount < 2 || bucketCount > 200) {
+    throw new Error(
+      `getVolumeProfile: bucketCount must be an integer in [2, 200] (got ${bucketCount})`,
+    );
+  }
+
+  const conn = await getConn();
+
+  // First pass: find the close-price range in the window. We need this
+  // before we can size the buckets. `volume IS NOT NULL` mirrors the
+  // bucketing query so the range and the bucketed sums see the same
+  // bar set — a NULL-volume bar at an extreme price shouldn't widen
+  // the range and leave dead space at the edges of the profile.
+  const rangeSql = `
+    SELECT MIN(close) AS lo, MAX(close) AS hi, COUNT(*) AS n
+    FROM ohlcv
+    WHERE ticker = ?
+      AND dt >= CAST(? AS DATE)
+      AND dt <= CAST(? AS DATE)
+      AND volume IS NOT NULL
+  `;
+  const rangeStmt = await conn.prepare(rangeSql);
+  let lo: number;
+  let hi: number;
+  let n: number;
+  try {
+    const rangeTbl = await rangeStmt.query(ticker, startDate, endDate);
+    const rangeRows = rangeTbl
+      .toArray()
+      .map((r) => r.toJSON() as Record<string, unknown>);
+    const rangeRow = rangeRows[0];
+    if (!rangeRow) {
+      return { buckets: [], poc: null, totalVolume: 0, barsAnalyzed: 0 };
+    }
+    n = toNum(rangeRow.n);
+    if (n === 0) {
+      return { buckets: [], poc: null, totalVolume: 0, barsAnalyzed: 0 };
+    }
+    lo = toNum(rangeRow.lo);
+    hi = toNum(rangeRow.hi);
+  } finally {
+    await rangeStmt.close();
+  }
+
+  // Degenerate case: every bar in the window closed at the same price.
+  // We can't bucket a zero-width range. Surface barsAnalyzed so the
+  // UI can show "single price — no profile" rather than confusing it
+  // with the empty-data case.
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || lo === hi) {
+    return { buckets: [], poc: null, totalVolume: 0, barsAnalyzed: n };
+  }
+
+  const bucketWidth = (hi - lo) / bucketCount;
+
+  // Second pass: bucket each bar by close price.
+  //   FLOOR((close - lo) / bucketWidth) → bucket index 0..bucketCount-1
+  // Edge case: close == hi gives bucket index == bucketCount (out of
+  // range by one). LEAST/GREATEST clamps it back into [0, bucketCount-1]
+  // so the topmost bucket includes its upper edge.
+  const profileSql = `
+    WITH bucketed AS (
+      SELECT
+        LEAST(${bucketCount - 1}, GREATEST(0, FLOOR((close - ${lo}) / ${bucketWidth})))::INTEGER AS bucket_idx,
+        volume
+      FROM ohlcv
+      WHERE ticker = ?
+        AND dt >= CAST(? AS DATE)
+        AND dt <= CAST(? AS DATE)
+        AND volume IS NOT NULL
+    )
+    SELECT
+      bucket_idx,
+      SUM(volume) AS total_volume,
+      COUNT(*) AS bars_count
+    FROM bucketed
+    GROUP BY bucket_idx
+    ORDER BY bucket_idx
+  `;
+  const profileStmt = await conn.prepare(profileSql);
+  let profileRows: Record<string, unknown>[];
+  try {
+    const profileTbl = await profileStmt.query(ticker, startDate, endDate);
+    profileRows = profileTbl
+      .toArray()
+      .map((r) => r.toJSON() as Record<string, unknown>);
+  } finally {
+    await profileStmt.close();
+  }
+
+  const buckets: VolumeProfileBucket[] = [];
+  let totalVolume = 0;
+  let barsAnalyzed = 0;
+  let pocIdx = -1;
+  let pocVol = -1;
+
+  for (const row of profileRows) {
+    const idx = toNum(row.bucket_idx);
+    const vol = toNum(row.total_volume);
+    const bars = toNum(row.bars_count);
+    const priceLow = lo + idx * bucketWidth;
+    const priceHigh = priceLow + bucketWidth;
+    buckets.push({
+      priceLow,
+      priceHigh,
+      priceMid: (priceLow + priceHigh) / 2,
+      totalVolume: vol,
+      barsCount: bars,
+    });
+    totalVolume += vol;
+    barsAnalyzed += bars;
+    if (vol > pocVol) {
+      pocVol = vol;
+      pocIdx = buckets.length - 1;
+    }
+  }
+
+  return {
+    buckets,
+    poc: pocIdx >= 0 ? buckets[pocIdx] : null,
+    totalVolume,
+    barsAnalyzed,
+  };
+}
+
 export interface CorrelationPair {
   tickerA: string;
   tickerB: string;

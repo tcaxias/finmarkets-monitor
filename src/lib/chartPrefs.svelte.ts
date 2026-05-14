@@ -20,6 +20,13 @@ export interface ChartPrefs {
   showSma50: boolean;
   showSma200: boolean;
   showVwap: boolean;
+  /**
+   * Volume Profile overlay — horizontal histogram on the right edge of
+   * the chart showing total volume traded at each price level over the
+   * visible window. Default off (it's an additional overlay alongside
+   * VWAP, not a core series).
+   */
+  showVolumeProfile: boolean;
   showVolume: boolean;
   /** Pcover and Pcover+20% horizontal price lines (RSU exit framework). */
   showPcoverLines: boolean;
@@ -40,6 +47,10 @@ const DEFAULTS: ChartPrefs = {
   // not a core series. Users opt in if they care about
   // volume-weighted "fair value" reference.
   showVwap: false,
+  // Volume Profile defaults off — it's a heavier visual overlay
+  // (40 horizontal bars stacked on the right edge); users opt in when
+  // they care about high-volume support/resistance reference levels.
+  showVolumeProfile: false,
   showVolume: true,
   showPcoverLines: true,
   showVestLine: true,
@@ -83,6 +94,7 @@ function loadFromStorage(): ChartPrefs {
       'showSma50',
       'showSma200',
       'showVwap',
+      'showVolumeProfile',
       'showVolume',
       'showPcoverLines',
       'showVestLine',
