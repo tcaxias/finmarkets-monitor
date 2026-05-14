@@ -59,18 +59,19 @@ function shouldFire(
   curr: AlertState,
   operator: AlertOperator,
 ): boolean {
+  // STRICT EDGE: never fire on the first evaluation. The first eval
+  // just initializes last_state; transitions only count from the
+  // second eval onward. This mirrors the production alerts.ts
+  // shouldFire() — see that file's comment for the rationale.
+  if (prev === null) return false;
   switch (operator) {
     case 'crosses_above':
-      if (prev === null) return curr === 'above';
       return prev === 'below' && curr === 'above';
     case 'crosses_below':
-      if (prev === null) return curr === 'below';
       return prev === 'above' && curr === 'below';
     case 'enters_band':
-      if (prev === null) return curr === 'inside';
       return prev === 'outside' && curr === 'inside';
     case 'exits_band':
-      if (prev === null) return curr === 'outside';
       return prev === 'inside' && curr === 'outside';
   }
 }
@@ -337,12 +338,28 @@ describe('alerts (integration)', () => {
     expect(stateRows[0].last_state).toBeNull();
   });
 
-  it('first-tick crosses_below fires immediately if already below threshold', async () => {
-    // Edge case: rule created while metric is already in the firing
-    // zone. The alerts.ts shouldFire() returns true on prev=null +
-    // curr=firing-side so the user gets an immediate alert — matches
-    // the intuitive "tell me if AAPL is below $200" mental model
-    // when AAPL is already at $190.
+  // ---- STRICT-EDGE SEMANTICS (cumulative-review Major #1) ----
+  //
+  // The shouldFire() function NEVER fires on the first evaluation
+  // (prev === null). The first eval just seeds last_state; firing
+  // requires an actual observed transition from one side of the
+  // threshold to the other. Without this, a newly-armed rule against
+  // a metric that's ALREADY in the firing zone would fire immediately
+  // on the next refresh — which feels like a false positive (the
+  // user just defined the rule; nothing transitioned).
+  //
+  // These three tests pin that contract. They replace the older
+  // "first-tick fires immediately" test that documented the previous
+  // (soft-edge) behaviour.
+
+  it('strict edge: does NOT fire on first evaluation (prev=null) for crosses_below', async () => {
+    // Rule created while price is already below threshold. Old
+    // behaviour fired immediately on the next tick; strict edge says
+    // "no — initialize state, then fire only on the next actual
+    // crossing". The user's mental model of "alert me when AAPL
+    // newly drops below $200" is better served by waiting for an
+    // observed transition than by firing as soon as the rule
+    // arms against an already-true condition.
     fixture = await bootFixture();
 
     await fixture.query(`
@@ -350,17 +367,90 @@ describe('alerts (integration)', () => {
         (id, ticker, metric, operator, threshold, threshold_band_high,
          enabled)
       VALUES
-        ('rule-first', 'AAPL', 'close', 'crosses_below', 200.0, NULL, TRUE)
+        ('rule-strict-cb', 'AAPL', 'close', 'crosses_below', 200.0, NULL, TRUE)
     `);
 
-    const fired = await tickAlert(fixture, 'rule-first', 190);
-    expect(fired).toBe(true);
+    // First evaluation: price already below threshold. STRICT edge:
+    // no fire — just seed last_state.
+    const fired = await tickAlert(fixture, 'rule-strict-cb', 190);
+    expect(fired).toBe(false);
+
+    // Sanity: alert_fires has zero rows.
+    const fires = await fixture.query(
+      `SELECT observed_value FROM alert_fires WHERE alert_id = 'rule-strict-cb'`,
+    );
+    expect(fires.length).toBe(0);
+
+    // Sanity: last_state was seeded to 'below' so the next actual
+    // transition can be detected.
+    const stateRows = await fixture.query(
+      `SELECT last_state, last_evaluated_value FROM alerts WHERE id = 'rule-strict-cb'`,
+    );
+    expect(stateRows[0].last_state).toBe('below');
+    expect(Number(stateRows[0].last_evaluated_value)).toBe(190);
+  });
+
+  it('strict edge: does NOT fire on first evaluation (prev=null) for crosses_above', async () => {
+    // Mirror of the crosses_below strict-edge test. Rule armed
+    // while RSI is already above threshold — should NOT fire.
+    fixture = await bootFixture();
+
+    await fixture.query(`
+      INSERT INTO alerts
+        (id, ticker, metric, operator, threshold, threshold_band_high,
+         enabled)
+      VALUES
+        ('rule-strict-ca', 'AAPL', 'rsi', 'crosses_above', 70.0, NULL, TRUE)
+    `);
+
+    // First evaluation: RSI already above 70. Strict edge → no fire.
+    const fired = await tickAlert(fixture, 'rule-strict-ca', 80);
+    expect(fired).toBe(false);
 
     const fires = await fixture.query(
-      `SELECT observed_value FROM alert_fires WHERE alert_id = 'rule-first'`,
+      `SELECT observed_value FROM alert_fires WHERE alert_id = 'rule-strict-ca'`,
+    );
+    expect(fires.length).toBe(0);
+
+    // last_state seeded to 'above'.
+    const stateRows = await fixture.query(
+      `SELECT last_state FROM alerts WHERE id = 'rule-strict-ca'`,
+    );
+    expect(stateRows[0].last_state).toBe('above');
+  });
+
+  it('strict edge: fires on the actual transition after first eval seeds state', async () => {
+    // Two-eval sequence proving the strict-edge cycle works:
+    //   tick 1: rule armed while ABOVE threshold → no fire, state seeded to 'above'
+    //   tick 2: price drops BELOW threshold → FIRE (prev='above', curr='below')
+    //
+    // This is the canonical "rule armed cleanly, then condition
+    // newly becomes true" flow that strict edge exists to express.
+    fixture = await bootFixture();
+
+    await fixture.query(`
+      INSERT INTO alerts
+        (id, ticker, metric, operator, threshold, threshold_band_high,
+         enabled)
+      VALUES
+        ('rule-strict-trans', 'AAPL', 'close', 'crosses_below', 200.0, NULL, TRUE)
+    `);
+
+    // Tick 1: above threshold, prev=null → no fire (was already true
+    // for the OLD semantics too, but we re-pin it here so a future
+    // refactor that breaks this case surfaces in the strict-edge suite).
+    const fire1 = await tickAlert(fixture, 'rule-strict-trans', 210);
+    expect(fire1).toBe(false);
+
+    // Tick 2: drops below — actual transition → FIRE.
+    const fire2 = await tickAlert(fixture, 'rule-strict-trans', 195);
+    expect(fire2).toBe(true);
+
+    const fires = await fixture.query(
+      `SELECT observed_value FROM alert_fires WHERE alert_id = 'rule-strict-trans'`,
     );
     expect(fires.length).toBe(1);
-    expect(Number(fires[0].observed_value)).toBe(190);
+    expect(Number(fires[0].observed_value)).toBe(195);
   });
 
   it('FK-style cascade: rule deletion can clear orphan fires', async () => {

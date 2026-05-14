@@ -85,8 +85,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     close == hi edge clamp. 302 → 308 tests passing.
 - **Alerts: DuckDB-persisted rules + edge-triggered evaluation +
   toasts + browser notifications.** Turns the app from passive
-  monitoring to active. Users define alert rules ("FIVN close crosses
-  below $20", "AAPL RSI crosses above 70", "RSI enters band [40,60]")
+  monitoring to active. Users define alert rules ("AAPL close crosses
+  below $150", "MSFT RSI crosses above 70", "RSI enters band [40,60]")
   via a new per-ticker AlertsPanel; the data layer evaluates them on
   every successful refresh and surfaces fires through both an in-app
   toast (always — top-right floating stack via new ToastContainer)

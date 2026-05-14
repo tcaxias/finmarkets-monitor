@@ -87,11 +87,15 @@
   // log to console.warn on failure, leave the badge hidden, do not
   // block the rest of the banner.
   //
-  // Minimum bars threshold (10) is a deliberate floor below the full
-  // 30-bar window: a sample stddev on 4-9 returns is too noisy to
-  // attach a regime label to without misleading the operator. Above
-  // 10 bars we render the badge with the actual `barsSampled` count
-  // available to the tooltip so partial windows are clearly marked.
+  // Minimum bars threshold (20) is a deliberate floor below the full
+  // 30-bar window: a sample stddev on under 20 returns is too noisy
+  // to attach a regime label to without misleading the operator —
+  // 10-15 bars can swing the annualized stddev (×√252) by enough to
+  // jump the regime band on a single outlier day. Above 20 bars the
+  // estimate is stable enough to label, and we render the badge with
+  // the actual `barsSampled` count available to the tooltip so
+  // partial windows are still clearly marked.
+  // Cumulative-review polish (threshold bumped from 10 → 20).
   let vol = $state<VolatilityRow | null>(null);
   $effect(() => {
     void dataState.lastFetched;
@@ -117,10 +121,11 @@
     };
   });
 
-  // Hide the badge for thin windows — sample stddev on < 10 returns
+  // Hide the badge for thin windows — sample stddev on < 20 returns
   // is noise, not signal, and labeling such a position "low/extreme"
-  // is worse than no label at all.
-  const volVisible = $derived(vol !== null && vol.barsSampled >= 10);
+  // is worse than no label at all. See the comment above the `vol`
+  // declaration for the rationale on the 20-bar floor.
+  const volVisible = $derived(vol !== null && vol.barsSampled >= 20);
 
   function regimeLabel(r: VolatilityRow['regime']): string {
     switch (r) {

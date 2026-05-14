@@ -71,6 +71,23 @@ export async function runAlertsForTicker(ticker: string): Promise<void> {
   if (prevGen === slice.generation) return;
   lastEvaluatedGeneration.set(t, slice.generation);
 
+  // Capture the generation we're about to evaluate against. The slice
+  // is a Svelte $state proxy that another concurrent runAlertsForTicker
+  // can mutate (via a fresher recompute landing while we're awaiting
+  // getDrawdowns or evaluateAlerts). Without re-checking the
+  // generation across each await boundary, an older run can complete
+  // AFTER a newer run and overwrite the rule's `last_state` with
+  // stale-context data — which then breaks the next edge-trigger
+  // evaluation because the state machine has the wrong baseline.
+  //
+  // The dedupe map above only handles "same generation called twice"
+  // (cheap re-entry); it does NOT handle "newer generation arrived
+  // mid-flight". This guard does.
+  //
+  // Cumulative-review Major #2 (this file).
+  const evaluatedGen = slice.generation;
+  const isStale = (): boolean => getEval(t).generation !== evaluatedGen;
+
   // Build the EvaluationContext from the slice. RSI / MACD: take the
   // last point if present, else null. The slice's arrays are clipped
   // to the active timeframe but the LAST element is always the most
@@ -110,6 +127,11 @@ export async function runAlertsForTicker(ticker: string): Promise<void> {
   let drawdownPct: number | null = null;
   try {
     const drawdowns = await getDrawdowns();
+    // Stale-check: if a newer recompute arrived while we were awaiting
+    // getDrawdowns, abort — the newer run will compute against fresher
+    // data and write its own (correct) last_state. Continuing here
+    // would race the newer run's evaluateAlerts UPDATE.
+    if (isStale()) return;
     const row = drawdowns.find((d) => d.ticker === t);
     if (row && Number.isFinite(row.drawdownPct)) {
       drawdownPct = row.drawdownPct;
@@ -119,6 +141,10 @@ export async function runAlertsForTicker(ticker: string): Promise<void> {
     // won't fire for this tick. Other metrics still evaluate.
     console.warn(`alertsRunner: getDrawdowns failed for ${t}`, err);
   }
+
+  // Belt-and-suspenders stale check before we invest the cost of
+  // building the context + evaluating against the DB.
+  if (isStale()) return;
 
   const ctx: EvaluationContext = {
     ticker: t,
@@ -136,6 +162,14 @@ export async function runAlertsForTicker(ticker: string): Promise<void> {
     console.warn(`alertsRunner: evaluateAlerts failed for ${t}`, err);
     return;
   }
+
+  // Final stale check: evaluateAlerts itself awaits the DB. If a
+  // newer recompute landed mid-flight, the fires we just produced are
+  // against stale context — discard rather than surfacing as toasts /
+  // notifications / state-mutation. The newer run will produce the
+  // correct fires (which may be a superset, subset, or different set
+  // entirely) against the fresh context.
+  if (isStale()) return;
 
   // Surface each fire to the user via both surfaces. Browser
   // notification is fire-and-forget — the boolean return tells us if

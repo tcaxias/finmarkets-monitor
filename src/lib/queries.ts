@@ -888,6 +888,17 @@ export async function getCorrelationMatrix(
   tickers: string[],
   windowBars: number = 60,
 ): Promise<CorrelationPair[]> {
+  // windowBars is interpolated directly into SQL (CTE row-number
+  // window). Today the only caller passes 60, but the helper is
+  // exported so a future caller could pass 0 / negative / NaN /
+  // 10_000 and produce confusing SQL behaviour or accidental table
+  // scans. Defend at the boundary.
+  // Cumulative-review Minor (windowBars validation).
+  if (!Number.isInteger(windowBars) || windowBars < 1 || windowBars > 1000) {
+    throw new Error(
+      `getCorrelationMatrix: windowBars must be an integer in [1, 1000] (got ${windowBars})`,
+    );
+  }
   if (tickers.length < 2) return [];
   const conn = await getConn();
 

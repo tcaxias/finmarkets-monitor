@@ -4,8 +4,8 @@
 // ----------------------
 // The "monitoring" half of finmarkets-monitor was previously passive —
 // the user opened the page, eyeballed the dashboard, made a decision.
-// Alerts turn it active: define a rule like "FIVN closes below $20" or
-// "AAPL RSI crosses above 70" and the app will surface a toast + a
+// Alerts turn it active: define a rule like "AAPL closes below $150" or
+// "MSFT RSI crosses above 70" and the app will surface a toast + a
 // browser notification the moment the condition newly becomes true.
 //
 // The "newly" is load-bearing. A rule that fires on every refresh while
@@ -577,19 +577,33 @@ function shouldFire(
   curr: AlertState,
   operator: AlertOperator,
 ): boolean {
+  // STRICT EDGE SEMANTICS: never fire on the first evaluation.
+  //
+  // The first eval (prev === null) just initializes the rule's
+  // last_state — firing is decoupled from that initialization. Without
+  // this, a newly-created rule against a metric that's already in the
+  // firing zone (e.g. "alert when AAPL closes below $200" while AAPL
+  // is at $190) would fire IMMEDIATELY on the next refresh, which
+  // feels like a false positive — the user just defined the rule;
+  // nothing actually transitioned.
+  //
+  // Trade-off: a user who wants the "is currently true" semantics has
+  // to wait one refresh cycle for the state to seed, then trigger an
+  // actual edge to fire. Worth it — the alternative produces immediate
+  // noise on every newly-armed rule and undermines confidence in the
+  // alerting system.
+  //
+  // Cumulative-review Major #1 (this file).
+  if (prev === null) return false;
+
   switch (operator) {
     case 'crosses_above':
-      // First eval: fire if already above. Subsequent: fire only on transition.
-      if (prev === null) return curr === 'above';
       return prev === 'below' && curr === 'above';
     case 'crosses_below':
-      if (prev === null) return curr === 'below';
       return prev === 'above' && curr === 'below';
     case 'enters_band':
-      if (prev === null) return curr === 'inside';
       return prev === 'outside' && curr === 'inside';
     case 'exits_band':
-      if (prev === null) return curr === 'outside';
       return prev === 'inside' && curr === 'outside';
   }
 }

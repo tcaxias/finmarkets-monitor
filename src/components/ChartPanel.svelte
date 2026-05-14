@@ -74,6 +74,12 @@
   let earningsMarkers: ISeriesMarkersPluginApi<Time> | undefined;
   let priceLines: IPriceLine[] = [];
   let resizeObserver: ResizeObserver | undefined;
+  // Volume-profile alignment scheduler: re-derives `priceToCoordinate`
+  // outputs whenever the visible price/time range changes (zoom/pan).
+  // Held at component scope so the chart-teardown can unsubscribe.
+  // See `subscribeRangeAlignment()` below for the rationale.
+  let alignmentHandler: (() => void) | undefined;
+  let alignmentTickPending = false;
 
   let hasData = $state(false);
   let loadError = $state<string | null>(null);
@@ -96,8 +102,10 @@
   let volumeProfile = $state<VolumeProfile | null>(null);
   // Bumped after each render so the priceToCoordinate-driven `y`
   // computations can react to chart layout changes (resize, series
-  // add/remove). Without this the overlay computes once at fetch
-  // time and stale Y coords stick around through resizes.
+  // add/remove, AND visible-range changes from zoom/pan). Without
+  // this the overlay computes once at fetch time and stale Y coords
+  // stick around through resizes/zooms — bars visibly drift out of
+  // alignment with the price axis on every scroll-wheel zoom.
   let chartRenderTick = $state(0);
 
   // Resolve the position: explicit prop wins, fallback to active.
@@ -165,6 +173,34 @@
       wickUpColor: COLORS.upWick,
       wickDownColor: COLORS.downWick,
     });
+
+    // Volume-profile overlay alignment.
+    //
+    // The overlay positions bars via priceToCoordinate(), which depends
+    // on the chart's current visible price range. The price range
+    // changes whenever the user zooms (scroll-wheel) or pans (drag) —
+    // the price scale auto-rescales to fit visible data. Without
+    // observing those changes, the overlay's Y coordinates go stale
+    // and bars visibly drift out of alignment with the price axis.
+    //
+    // Lightweight Charts v5 doesn't expose a direct priceScale change
+    // event, but visible-logical-range changes drive the autoscale
+    // pipeline, so subscribing to that covers the practical cases
+    // (scroll-zoom, drag-pan, fit-content). The handler is throttled
+    // through requestAnimationFrame because these events fire on
+    // every mouse move during a drag — coalescing into one rAF tick
+    // per frame keeps the overlay smooth without jank.
+    //
+    // Cumulative-review Major #3 (this file).
+    alignmentHandler = () => {
+      if (alignmentTickPending) return;
+      alignmentTickPending = true;
+      requestAnimationFrame(() => {
+        chartRenderTick++;
+        alignmentTickPending = false;
+      });
+    };
+    chart.timeScale().subscribeVisibleLogicalRangeChange(alignmentHandler);
   }
 
   // ----- Series creation helpers -----
@@ -531,6 +567,16 @@
     return () => {
       resizeObserver?.disconnect();
       resizeObserver = undefined;
+      // Unsubscribe the alignment handler before chart.remove() — the
+      // chart teardown will null out internal subscriptions but we
+      // hold the handler ref ourselves and want a clean detach (avoids
+      // any window where the handler could fire against a half-torn-
+      // down chart on rapid remounts).
+      if (chart && alignmentHandler) {
+        chart.timeScale().unsubscribeVisibleLogicalRangeChange(alignmentHandler);
+      }
+      alignmentHandler = undefined;
+      alignmentTickPending = false;
       // Lightweight Charts cleans up child series automatically when
       // the chart is removed; we don't need to call dropX() here, but
       // we DO need to null out our handles so a stale ref from a
