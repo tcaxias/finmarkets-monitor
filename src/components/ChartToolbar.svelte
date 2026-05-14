@@ -81,6 +81,7 @@
         type="button"
         class="tf-btn"
         class:active={chartPrefs.timeframe === tf}
+        aria-pressed={chartPrefs.timeframe === tf}
         title={`Timeframe: ${tf}`}
         onclick={() => setTimeframe(tf)}
       >
@@ -92,10 +93,12 @@
   <div class="group toggle-group" role="group" aria-label="Series toggles">
     {#each TOGGLES as t (t.key)}
       {@const disabled = isIntraday && t.dailyOnly}
+      {@const pressed = chartPrefs[t.key] && !disabled}
       <button
         type="button"
         class="toggle-btn"
-        class:active={chartPrefs[t.key] && !disabled}
+        class:active={pressed}
+        aria-pressed={pressed}
         {disabled}
         title={INDICATOR_DESCRIPTIONS[t.indicator].description}
         onclick={() => toggle(t.key)}

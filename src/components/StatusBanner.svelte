@@ -197,6 +197,11 @@
       <span class={convictionDotClass(slice.summary?.conviction ?? null)}></span>
       <span class="block-value">
         {shortConvictionLabel(slice.summary?.conviction ?? null)}
+        {#if slice.isIntraday}<span
+            class="conviction-context"
+            title="Conviction is computed from daily bars; the chart above is showing intraday data."
+            >(daily)</span
+          >{/if}
       </span>
     </span>
 
@@ -327,6 +332,17 @@
 
   .conviction {
     align-items: center;
+  }
+
+  /* Small "(daily)" annotation shown next to conviction in intraday
+     mode — the verdict still reflects daily bars, the chart above shows
+     intraday. Subscript-sized + muted so it reads as a clarifier, not a
+     competing label. */
+  .conviction-context {
+    font-size: 10px;
+    color: var(--muted);
+    margin-left: 4px;
+    cursor: help;
   }
 
   .dot {

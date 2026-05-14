@@ -220,9 +220,9 @@ export async function getIntradayCandles(
   asOf?: string | null,
 ): Promise<Candle[]> {
   const conn = await getConn();
-  // When `asOf` is set, restrict to bars on that calendar day. When
-  // not set, return everything in the table for the ticker — callers
-  // typically refresh before reading, so what's there is "today".
+  // Always bound by date. When `asOf` is set use it; otherwise restrict
+  // to today (CURRENT_DATE). This prevents prior sessions persisted in
+  // OPFS from leaking into the live "1D" view (review Major #2).
   const sql = asOf
     ? `SELECT
          epoch(ts)::BIGINT AS time,
@@ -234,7 +234,7 @@ export async function getIntradayCandles(
          epoch(ts)::BIGINT AS time,
          open, high, low, close
        FROM ohlcv_intraday
-       WHERE ticker = ?
+       WHERE ticker = ? AND date(ts) = CURRENT_DATE
        ORDER BY ts`;
   const stmt = await conn.prepare(sql);
   try {
@@ -263,6 +263,8 @@ export async function getIntradayVolumeBars(
   asOf?: string | null,
 ): Promise<VolumeBar[]> {
   const conn = await getConn();
+  // Same date-bounding policy as getIntradayCandles: live mode must
+  // restrict to CURRENT_DATE so prior sessions don't leak.
   const sql = asOf
     ? `SELECT
          epoch(ts)::BIGINT AS time,
@@ -276,7 +278,7 @@ export async function getIntradayVolumeBars(
          volume,
          close >= open AS up
        FROM ohlcv_intraday
-       WHERE ticker = ?
+       WHERE ticker = ? AND date(ts) = CURRENT_DATE
        ORDER BY ts`;
   const stmt = await conn.prepare(sql);
   try {

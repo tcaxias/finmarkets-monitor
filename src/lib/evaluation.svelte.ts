@@ -284,13 +284,36 @@ export async function recomputeOne(ticker: string): Promise<void> {
         return;
       }
 
-      const rsi = computeRsi(closes, 14);
-      const macd = computeMacd(closes, 12, 26, 9);
+      // Compute indicators on the FULL close history so warmup is
+      // intact (Wilder's RSI / EMA chains in MACD need ~200 bars before
+      // the values stabilise).
+      const rsiFull = computeRsi(closes, 14);
+      const macdFull = computeMacd(closes, 12, 26, 9);
+
+      // Witness conviction + divergence detection use the FULL series so
+      // the verdict reflects current momentum (the doc-defined "is the
+      // recent trend bullish/bearish" question, not "as-of timeframe
+      // window"). detectRsiDivergence only inspects the most recent N
+      // bars internally so this is correct.
       const trend = evaluateTrend(candles, sma20, sma200);
       const vol = evaluateVolume(candles, volume);
-      const ind = evaluateIndicators(rsi, macd);
+      const ind = evaluateIndicators(rsiFull, macdFull);
       const summary = summarize(trend, vol, ind);
-      const divergence = detectRsiDivergence(rsi, closes, 30);
+      const divergence = detectRsiDivergence(rsiFull, closes, 30);
+
+      // Clip the RSI/MACD arrays handed to the indicator panes so they
+      // render the same time window as the price chart (review Major #3).
+      // RsiPanel/MacdPanel use Lightweight Charts' fitContent() on their
+      // own time scale; without clipping, those panes show a wider range
+      // than the candle chart.
+      //
+      // `since` is an ISO yyyy-mm-dd string OR null (= 'All'); convert
+      // to unix seconds for comparison against the indicator points'
+      // `time` field. For null we keep the full series.
+      const sinceEpoch =
+        since !== null ? Math.floor(new Date(`${since}T00:00:00Z`).getTime() / 1000) : null;
+      const rsi = sinceEpoch === null ? rsiFull : rsiFull.filter((p) => p.time >= sinceEpoch);
+      const macd = sinceEpoch === null ? macdFull : macdFull.filter((p) => p.time >= sinceEpoch);
 
       slice.candles = candles;
       slice.sma20 = sma20;

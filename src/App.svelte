@@ -122,6 +122,21 @@
     }
   });
 
+  // Intraday-refresh trigger. The intraday refresh path writes to
+  // ohlcv_intraday and updates dataState.intradayLastFetched, but the
+  // daily refresh effect above only watches `rowCount` and
+  // `lastFetchedByTicker` — neither moves when intraday lands. Without
+  // this dedicated effect, hitting "Refresh intraday" updates the
+  // database but the chart stays on stale 1D data (review Major #1).
+  $effect(() => {
+    const t = activePosition?.ticker ?? '';
+    const _intradayFetched = t ? dataState.intradayLastFetched[t] ?? null : null;
+    void _intradayFetched;
+    if (dbStatus === 'ready' && t && chartPrefs.timeframe === '1D') {
+      void recomputeOne(t);
+    }
+  });
+
   function onReturnToLive(): void {
     setAsOfDate(null);
   }
@@ -223,8 +238,13 @@
       </section>
 
       <section class="container wide stack" id="indicators">
-        {#if chartPrefs.showRsiPane}<RsiPanel />{/if}
-        {#if chartPrefs.showMacdPane}<MacdPanel />{/if}
+        <!-- RSI/MACD are daily concepts. In 1D (intraday) mode the
+             slice's rsi/macd arrays are empty, so we suppress the panes
+             entirely rather than render empty placeholders. The toggle
+             state is preserved in chartPrefs, so flipping back to a
+             daily timeframe restores the panes (review Polish #1). -->
+        {#if chartPrefs.showRsiPane && chartPrefs.timeframe !== '1D'}<RsiPanel />{/if}
+        {#if chartPrefs.showMacdPane && chartPrefs.timeframe !== '1D'}<MacdPanel />{/if}
         <IndicatorsAbout />
       </section>
 
