@@ -84,3 +84,38 @@ documents.
 - `npm run build` — production build
 - `npm run check` — type check
 - `npm test -- --run` — run vitest suite
+
+## License
+
+Dual-licensed at your option under either:
+
+- [Apache License, Version 2.0](./LICENSE-APACHE)
+- [ISC License](./LICENSE-ISC)
+
+SPDX-License-Identifier: `Apache-2.0 OR ISC`
+
+Copyright © 2026 Tiago Caxias.
+
+Contributions are accepted under both licenses simultaneously. By submitting
+a contribution you agree to license it under the same `Apache-2.0 OR ISC`
+terms as the rest of the project.
+
+### Bundled and runtime-loaded dependencies
+
+This project bundles or loads the following open-source libraries at
+runtime, all under permissive licenses compatible with the project's
+dual-license terms. Full attribution lives in [NOTICE](./NOTICE).
+
+| Library                                                                       | License      | Role                                                  |
+| ----------------------------------------------------------------------------- | ------------ | ----------------------------------------------------- |
+| [DuckDB WASM](https://github.com/duckdb/duckdb-wasm)                          | MIT          | Analytical SQL engine (loaded from jsDelivr CDN)      |
+| [Apache Arrow](https://github.com/apache/arrow)                               | Apache-2.0   | Columnar data interchange (transitive of DuckDB)      |
+| [FlatBuffers](https://github.com/google/flatbuffers)                          | Apache-2.0   | Serialization (transitive of DuckDB)                  |
+| [Lightweight Charts](https://github.com/tradingview/lightweight-charts)       | Apache-2.0   | Chart rendering — © TradingView, Inc.                 |
+| [Svelte](https://github.com/sveltejs/svelte)                                  | MIT          | UI framework                                          |
+| [technicalindicators](https://github.com/anandanand84/technicalindicators)    | MIT          | RSI / MACD / EMA computations                         |
+| [tslib](https://github.com/microsoft/tslib)                                   | 0BSD         | TypeScript runtime helpers (transitive)               |
+| [qs](https://github.com/ljharb/qs)                                            | BSD-3-Clause | Query-string parsing (transitive)                     |
+
+Build-time tooling (Vite, Svelte compiler, TypeScript, Vitest, Wrangler,
+etc.) is not redistributed in the deployed application.

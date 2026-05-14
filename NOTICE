@@ -1,0 +1,105 @@
+finmarkets-monitor
+Copyright (c) 2026 Tiago Caxias
+
+This product is dual-licensed under the Apache License, Version 2.0
+(LICENSE-APACHE) and the ISC License (LICENSE-ISC) at the recipient's
+option. SPDX-License-Identifier: Apache-2.0 OR ISC
+
+================================================================================
+Bundled and runtime-loaded third-party dependencies
+================================================================================
+
+The compiled application bundle ships, or loads at runtime, the following
+third-party libraries. Each is used under its own license, reproduced or
+referenced below as required.
+
+--------------------------------------------------------------------------------
+DuckDB WASM (@duckdb/duckdb-wasm)
+--------------------------------------------------------------------------------
+Copyright 2018-2024 Stichting DuckDB Foundation
+Copyright 2018-2024 the DuckDB-Wasm authors
+License: MIT
+Source: https://github.com/duckdb/duckdb-wasm
+
+The DuckDB WASM binaries are loaded at runtime from the jsDelivr CDN
+mirror of the official npm package; no modifications are made.
+
+--------------------------------------------------------------------------------
+Apache Arrow (apache-arrow)
+--------------------------------------------------------------------------------
+Copyright 2016-2024 The Apache Software Foundation
+License: Apache License, Version 2.0
+Source: https://github.com/apache/arrow
+
+This product includes software developed at The Apache Software Foundation
+(http://www.apache.org/). See the upstream NOTICE file at
+https://github.com/apache/arrow/blob/main/NOTICE.txt for the full
+attribution chain (which includes work originally developed at Carnegie
+Mellon University and Dato, Inc.).
+
+Transitively included via @duckdb/duckdb-wasm.
+
+--------------------------------------------------------------------------------
+FlatBuffers (flatbuffers)
+--------------------------------------------------------------------------------
+Copyright 2014 Google Inc.
+License: Apache License, Version 2.0
+Source: https://github.com/google/flatbuffers
+
+Transitively included via @duckdb/duckdb-wasm.
+
+--------------------------------------------------------------------------------
+Lightweight Charts (lightweight-charts)
+--------------------------------------------------------------------------------
+Copyright 2023 TradingView, Inc.
+License: Apache License, Version 2.0
+Source: https://github.com/tradingview/lightweight-charts
+
+--------------------------------------------------------------------------------
+@swc/helpers
+--------------------------------------------------------------------------------
+Copyright 2024 강동윤 (kdy1)
+License: Apache License, Version 2.0
+Source: https://github.com/swc-project/swc
+
+Transitively included via build tooling.
+
+--------------------------------------------------------------------------------
+Svelte (svelte)
+--------------------------------------------------------------------------------
+Copyright (c) 2016-2024 Rich Harris and contributors
+License: MIT
+Source: https://github.com/sveltejs/svelte
+
+--------------------------------------------------------------------------------
+technicalindicators
+--------------------------------------------------------------------------------
+Copyright (c) 2016 Anand Aravindan
+License: MIT
+Source: https://github.com/anandanand84/technicalindicators
+
+--------------------------------------------------------------------------------
+tslib
+--------------------------------------------------------------------------------
+Copyright (c) Microsoft Corporation
+License: 0BSD
+Source: https://github.com/microsoft/tslib
+
+--------------------------------------------------------------------------------
+qs
+--------------------------------------------------------------------------------
+Copyright (c) 2014 Nathan LaFreniere and other contributors
+License: BSD-3-Clause
+Source: https://github.com/ljharb/qs
+
+Transitively included via build tooling.
+
+================================================================================
+
+Build-time tooling (Vite, Svelte compiler, TypeScript, Vitest, Wrangler,
+ESLint, Prettier, etc.) is not redistributed as part of the deployed
+application and is not subject to attribution requirements in the
+runtime artefacts.
+
+For the complete transitive dependency tree and all license declarations,
+run `npm ls` and inspect each package's LICENSE file under node_modules.
