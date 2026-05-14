@@ -7,6 +7,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Cross-ticker Anomaly Detection panel** — three SQL-native detectors
+  grouped into Volume (z-score ≥ 3 over the trailing 60-day mean,
+  last 30 days), Price (gaps ≥ 2% open-vs-prev-close, last 30 days),
+  and Regime (50/200 SMA golden/death crossings, last 90 days). Each
+  detector is a one-click button against the user's full OHLCV
+  history. Closes the DuckDB-leverage push: each query is a single
+  window-function statement (`STDDEV_SAMP`/`AVG` over a `60 PRECEDING
+  AND 1 PRECEDING` window for the z-score; `LAG(close)` for gaps;
+  `LAG(sma50 - sma200)` sign-change for crossings) — none of these
+  would be elegant in JS arrays. Lives in Portfolio mode between
+  Screener and PortfolioCharts. New `src/lib/anomalies.ts` owns the
+  `ANOMALIES` catalog plus a `runAnomaly` executor; new
+  `src/components/AnomaliesPanel.svelte` renders the trigger grid +
+  results table with a new `zscore` cell format that severity-codes
+  the magnitude (yellow ≥3, orange ≥4, red ≥5). 24 new tests pin
+  catalog invariants, every detector's SQL shape (window sizes,
+  threshold predicates, label literals), the `w200 >= 200` partial-
+  window guard for crossings, and the empty-positions safety branch.
 - **Per-ticker Backtest panel** — historical conviction chart + three
   predefined example backtest queries. Lives in per-ticker view between
   the indicators (RSI/MACD) and ReviewExport. Section A renders the
