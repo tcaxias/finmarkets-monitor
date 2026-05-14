@@ -7,6 +7,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Post-earnings drift backtest query.** New 4th entry in
+  `BACKTEST_QUERIES`: "Post-earnings drift (1/5/20 day forward
+  returns)". Joins `earnings_events` with `ohlcv` to compute the
+  1-day, 5-day, and 20-day forward return after each historical
+  earnings event for the active ticker, bucketed by EPS surprise
+  direction (beat vs miss). Anchors T=0 to the close ON the
+  earnings date and walks +1/+5/+20 trading-day offsets via
+  `ROW_NUMBER` over OHLCV (so weekends and holidays don't shift
+  the comparison bar). Limited to the 12 most-recent events for
+  table readability. Why: "how does this stock react to earnings?"
+  is the most-asked question for any earnings-sensitive position —
+  now answerable in one click against the user's own data, with
+  the beat/miss split letting you separate "follow the reaction"
+  from "fade it" stories. No new SQL helpers, no schema changes,
+  no UI changes (BacktestPanel already iterates `BACKTEST_QUERIES`).
+  Five new SQL-invariant tests in `backtest.test.ts` plus three new
+  integration tests in `backtest.integration.test.ts` (numerical
+  pin via deterministic linear-trend OHLCV; NULL-future-bar edge
+  case for very recent earnings; INNER-JOIN drop of events with
+  no matching OHLCV bar). Bundle delta: +2.5 kB raw / +0.6 kB gzip
+  on the lazy-loaded `BacktestPanel` chunk. Tests: 289 (up from
+  280).
+
 - **Volatility regime badge in StatusBanner.** New `Vol: X% (regime)`
   pill between Pcover and Updated showing the active position's
   30-day realized volatility, annualized, with a qualitative regime

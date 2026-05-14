@@ -35,8 +35,8 @@ import type { Conviction } from './witnesses';
 // ---------- BACKTEST_QUERIES catalog ----------
 
 describe('BACKTEST_QUERIES catalog', () => {
-  it('exports three predefined queries', () => {
-    expect(BACKTEST_QUERIES).toHaveLength(3);
+  it('exports four predefined queries', () => {
+    expect(BACKTEST_QUERIES).toHaveLength(4);
   });
 
   it('every query has a unique id', () => {
@@ -183,6 +183,47 @@ describe('rsi-extremes-followup query', () => {
     const sql = q.buildSql('AAPL');
     expect(sql).toMatch(/ORDER BY\s+signal_dt DESC/);
     expect(sql).toMatch(/LIMIT\s+25/);
+  });
+});
+
+describe('post-earnings-drift query', () => {
+  const q = getBacktestQueryById('post-earnings-drift')!;
+
+  it('joins earnings_events against ohlcv on (ticker, dt)', () => {
+    const sql = q.buildSql('AAPL');
+    expect(sql).toContain('FROM earnings_events e');
+    expect(sql).toContain('JOIN numbered n ON n.ticker = e.ticker AND n.dt = e.dt');
+  });
+
+  it('looks up forward closes at +1, +5, +20 trading-day offsets', () => {
+    const sql = q.buildSql('AAPL');
+    // Trading-day offsets via ROW_NUMBER, not calendar arithmetic, so
+    // weekends/holidays don't shift the comparison bar.
+    expect(sql).toContain('ROW_NUMBER()');
+    expect(sql).toContain('ec.earnings_rn + 1');
+    expect(sql).toContain('ec.earnings_rn + 5');
+    expect(sql).toContain('ec.earnings_rn + 20');
+  });
+
+  it('buckets each event by surprise direction (beat / miss / unknown)', () => {
+    const sql = q.buildSql('AAPL');
+    expect(sql).toContain("WHEN surprise_pct IS NULL THEN 'unknown'");
+    expect(sql).toContain("WHEN surprise_pct > 0 THEN 'beat'");
+    expect(sql).toContain("ELSE 'miss'");
+  });
+
+  it('skips events with no actual EPS reported (eps_actual IS NOT NULL)', () => {
+    const sql = q.buildSql('AAPL');
+    // Twelve Data emits future scheduled events with NULL eps_actual;
+    // those have no surprise to bucket on and no historical reaction
+    // to measure, so they're filtered before the join.
+    expect(sql).toContain('e.eps_actual IS NOT NULL');
+  });
+
+  it('limits to the 12 most-recent earnings events', () => {
+    const sql = q.buildSql('AAPL');
+    expect(sql).toMatch(/ORDER BY\s+earnings_dt DESC/);
+    expect(sql).toMatch(/LIMIT\s+12/);
   });
 });
 

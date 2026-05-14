@@ -418,6 +418,91 @@ export const BACKTEST_QUERIES: BacktestQueryDefinition[] = [
       { key: 'return_pct', label: 'Return', format: 'pct' },
     ],
   },
+  {
+    id: 'post-earnings-drift',
+    label: 'Post-earnings drift (1/5/20 day forward returns)',
+    description:
+      "For every historical earnings event, the stock's 1-day, 5-day, and 20-day forward return measured from the close on the earnings date. Bucketed by EPS surprise direction (beat vs miss). Useful for testing whether this ticker tends to follow the initial reaction or fade it. Requires earnings data — refresh the active position to populate.",
+    // Implementation notes:
+    //   - T=0 close is the close ON the earnings date. For Twelve Data
+    //     events with `time_of_day = 'After Market'` the actual price
+    //     reaction starts the NEXT trading day, so what we're really
+    //     measuring is "+1d after close" → "+2d after close" etc. That's
+    //     the right thing for after-hours releases. For 'Before Market'
+    //     releases T=0's close already reflects the reaction. v1 keeps
+    //     these mixed in the same table; the user can read off the
+    //     time_of_day from the earnings panel if they need to bucket
+    //     further. Filed away — see CHANGELOG.
+    //   - We use ROW_NUMBER over OHLCV (not date-arithmetic) so "+1/+5/
+    //     +20 days" mean trading-day offsets, skipping weekends and
+    //     holidays. Same approach as the rsi-extremes query above.
+    //   - LIMIT 12 keeps the table readable — most tickers have ≤ 8
+    //     years of earnings history (32 events), and the most recent
+    //     12 are the ones a user is realistically using to update a
+    //     prior. If you want the whole record set, run the SQL via
+    //     the SQL panel directly.
+    buildSql: (ticker) => `
+      WITH numbered AS (
+        SELECT
+          ticker, dt, close,
+          ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY dt) AS rn
+        FROM ohlcv
+        WHERE ticker = ${quoteTicker(ticker)}
+      ),
+      earnings_with_close AS (
+        SELECT
+          e.dt AS earnings_dt,
+          e.eps_actual,
+          e.eps_estimate,
+          e.surprise_pct,
+          n.rn AS earnings_rn,
+          n.close AS earnings_close
+        FROM earnings_events e
+        JOIN numbered n ON n.ticker = e.ticker AND n.dt = e.dt
+        WHERE e.ticker = ${quoteTicker(ticker)}
+          AND e.eps_actual IS NOT NULL
+      ),
+      forwards AS (
+        SELECT
+          ec.earnings_dt,
+          ec.surprise_pct,
+          ec.earnings_close,
+          ec.eps_actual,
+          ec.eps_estimate,
+          (SELECT close FROM numbered n2 WHERE n2.rn = ec.earnings_rn + 1) AS close_1d,
+          (SELECT close FROM numbered n5 WHERE n5.rn = ec.earnings_rn + 5) AS close_5d,
+          (SELECT close FROM numbered n20 WHERE n20.rn = ec.earnings_rn + 20) AS close_20d
+        FROM earnings_with_close ec
+      )
+      SELECT
+        earnings_dt,
+        eps_actual,
+        eps_estimate,
+        surprise_pct,
+        CASE
+          WHEN surprise_pct IS NULL THEN 'unknown'
+          WHEN surprise_pct > 0 THEN 'beat'
+          ELSE 'miss'
+        END AS direction,
+        earnings_close,
+        100.0 * (close_1d - earnings_close) / earnings_close AS return_1d_pct,
+        100.0 * (close_5d - earnings_close) / earnings_close AS return_5d_pct,
+        100.0 * (close_20d - earnings_close) / earnings_close AS return_20d_pct
+      FROM forwards
+      WHERE earnings_close IS NOT NULL
+      ORDER BY earnings_dt DESC
+      LIMIT 12
+    `,
+    columns: [
+      { key: 'earnings_dt', label: 'Earnings', format: 'date' },
+      { key: 'direction', label: 'Surprise', format: 'string' },
+      { key: 'surprise_pct', label: 'Surp %', format: 'pct' },
+      { key: 'eps_actual', label: 'EPS', format: 'number' },
+      { key: 'return_1d_pct', label: '+1d', format: 'pct' },
+      { key: 'return_5d_pct', label: '+5d', format: 'pct' },
+      { key: 'return_20d_pct', label: '+20d', format: 'pct' },
+    ],
+  },
 ];
 
 /**
