@@ -18,6 +18,7 @@
   import HistoricalControls from './components/HistoricalControls.svelte';
   import PositionTabs from './components/PositionTabs.svelte';
   import PortfolioOverview from './components/PortfolioOverview.svelte';
+  import PortfolioCharts from './components/PortfolioCharts.svelte';
   import PositionsPanel from './components/PositionsPanel.svelte';
   import DataPanel from './components/DataPanel.svelte';
   import WitnessPanel from './components/WitnessPanel.svelte';
@@ -185,14 +186,18 @@
   <nav class="page-nav" aria-label="In-page navigation">
     <div class="container narrow nav-inner">
       <a href="#status">Status</a>
-      <a href="#positions">Positions</a>
-      <a href="#data">Data</a>
+      {#if !activePosition && settings.positions.length > 0}
+        <a href="#overview">Overview</a>
+        <a href="#chart">Charts</a>
+      {/if}
       {#if activePosition}
         <a href="#witnesses">Witnesses</a>
         <a href="#chart">Chart</a>
         <a href="#indicators">Indicators</a>
         <a href="#review">Review</a>
       {/if}
+      <a href="#positions">Positions</a>
+      <a href="#data">Data</a>
     </div>
   </nav>
 
@@ -226,6 +231,9 @@
     {#if !activePosition}
       <section class="container wide stack" id="overview">
         <PortfolioOverview />
+      </section>
+      <section class="container wide stack" id="chart">
+        <PortfolioCharts />
       </section>
     {:else}
       <section class="container narrow stack" id="witnesses">

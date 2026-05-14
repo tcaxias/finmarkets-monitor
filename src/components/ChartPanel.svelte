@@ -31,10 +31,24 @@
     type HistogramData,
   } from 'lightweight-charts';
 
-  import { settings, getActivePosition } from '../lib/settings.svelte';
+  import {
+    settings,
+    getActivePosition,
+    getPositionByTicker,
+    type Position,
+  } from '../lib/settings.svelte';
   import { computeThresholds, type Thresholds } from '../lib/math';
   import { getEval } from '../lib/evaluation.svelte';
   import { chartPrefs } from '../lib/chartPrefs.svelte';
+
+  // Optional `ticker` prop. When provided, this chart locks to that
+  // ticker (used by PortfolioCharts to render one card per position).
+  // When omitted, falls back to the active position from settings
+  // (the standard per-ticker view behavior).
+  interface Props {
+    ticker?: string;
+  }
+  let { ticker: tickerProp }: Props = $props();
 
   let chartContainer: HTMLDivElement | undefined = $state();
   let chart: IChartApi | undefined;
@@ -49,9 +63,15 @@
   let hasData = $state(false);
   let loadError = $state<string | null>(null);
 
-  const activePosition = $derived.by(() => {
+  // Resolve the position: explicit prop wins, fallback to active.
+  // Touching settings.activePositionId / positions.length keeps the
+  // derivation reactive to position-list changes.
+  const activePosition = $derived.by((): Position | null => {
     settings.activePositionId;
     settings.positions.length;
+    if (tickerProp) {
+      return getPositionByTicker(tickerProp);
+    }
     return getActivePosition();
   });
 
