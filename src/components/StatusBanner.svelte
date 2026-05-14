@@ -7,7 +7,7 @@
   // overview mode) or the active position has no data yet, the banner
   // degrades gracefully to a neutral hint message.
 
-  import { evalState, getEval } from '../lib/evaluation.svelte';
+  import { getEval } from '../lib/evaluation.svelte';
   import { dataState } from '../lib/data.svelte';
   import { settings, getActivePosition } from '../lib/settings.svelte';
   import { computeThresholds } from '../lib/math';
@@ -33,12 +33,10 @@
 
   const ticker = $derived(activePosition?.ticker ?? '');
 
-  const slice = $derived.by(() => {
-    if (!ticker) return null;
-    // Touch byTicker so reactivity re-fires when a new key is inserted.
-    void evalState.byTicker;
-    return getEval(ticker);
-  });
+  // App.svelte ensures a slice exists for every configured position via
+  // ensureSlice(); getEval is therefore a pure read here and Svelte's
+  // reactivity tracks the ticker → slice dependency cleanly.
+  const slice = $derived(ticker ? getEval(ticker) : null);
 
   const thresholds = $derived(
     activePosition

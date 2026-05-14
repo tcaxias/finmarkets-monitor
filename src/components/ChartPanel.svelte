@@ -24,7 +24,7 @@
 
   import { settings, getActivePosition } from '../lib/settings.svelte';
   import { computeThresholds, type Thresholds } from '../lib/math';
-  import { evalState, getEval } from '../lib/evaluation.svelte';
+  import { getEval } from '../lib/evaluation.svelte';
 
   let chartContainer: HTMLDivElement | undefined = $state();
   let chart: IChartApi | undefined;
@@ -44,11 +44,10 @@
     return getActivePosition();
   });
 
-  const slice = $derived.by(() => {
-    if (!activePosition) return null;
-    void evalState.byTicker;
-    return getEval(activePosition.ticker);
-  });
+  // App.svelte's positions $effect ensures the slice exists before this
+  // runs — getEval is a pure read and Svelte tracks the slice properties
+  // we read in downstream $effects/derived.
+  const slice = $derived(activePosition ? getEval(activePosition.ticker) : null);
 
   const COLORS = {
     bg: '#0f1419',

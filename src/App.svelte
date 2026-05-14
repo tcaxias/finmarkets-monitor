@@ -28,7 +28,7 @@
   import { getDb, getVersion } from './lib/duckdb';
   import { refreshState, dataState } from './lib/data.svelte';
   import { settings, getActivePosition } from './lib/settings.svelte';
-  import { evalState, getEval, recomputeAll, recomputeOne } from './lib/evaluation.svelte';
+  import { ensureSlice, getEval, recomputeAll, recomputeOne } from './lib/evaluation.svelte';
   import { viewState, setAsOfDate, daysAgo } from './lib/viewState.svelte';
 
   let dbStatus = $state<'loading' | 'ready' | 'error'>('loading');
@@ -59,6 +59,17 @@
     settings.activePositionId;
     settings.positions.length;
     return getActivePosition();
+  });
+
+  // Eagerly ensure a slice exists in evalState.byTicker for every
+  // configured position. This is the canonical insertion point — by
+  // doing it here (centrally) instead of lazily in getEval, consumer
+  // components can read getEval(ticker) inside $derived blocks without
+  // the historical "void evalState.byTicker" reactivity touch.
+  $effect(() => {
+    for (const p of settings.positions) {
+      ensureSlice(p.ticker);
+    }
   });
 
   // Per-ticker recompute trigger. Watches active position's ticker and
@@ -112,7 +123,6 @@
       return;
     }
     const t = activePosition.ticker;
-    void evalState.byTicker;
     const slice = getEval(t);
     const price = slice.latestClose;
     if (price !== null && Number.isFinite(price)) {

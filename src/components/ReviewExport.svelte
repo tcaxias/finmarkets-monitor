@@ -6,7 +6,7 @@
 
   import { settings, getActivePosition } from '../lib/settings.svelte';
   import { dataState } from '../lib/data.svelte';
-  import { evalState, getEval } from '../lib/evaluation.svelte';
+  import { getEval } from '../lib/evaluation.svelte';
   import { viewState } from '../lib/viewState.svelte';
   import { computeThresholds } from '../lib/math';
   import { generateSundayReview } from '../lib/sundayReview';
@@ -24,11 +24,8 @@
     return getActivePosition();
   });
 
-  const slice = $derived.by(() => {
-    if (!activePosition) return null;
-    void evalState.byTicker;
-    return getEval(activePosition.ticker);
-  });
+  // App.svelte ensures slice exists; getEval here is a pure read.
+  const slice = $derived(activePosition ? getEval(activePosition.ticker) : null);
 
   const ticker = $derived(activePosition?.ticker ?? '');
   const rowCount = $derived(ticker ? (dataState.rowCount[ticker] ?? 0) : 0);

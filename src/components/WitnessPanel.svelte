@@ -5,7 +5,7 @@
   // of the old singleton evalState. When no position is active (portfolio
   // overview mode) renders a hint placeholder.
 
-  import { evalState, getEval } from '../lib/evaluation.svelte';
+  import { getEval } from '../lib/evaluation.svelte';
   import { settings, getActivePosition } from '../lib/settings.svelte';
 
   const activePosition = $derived.by(() => {
@@ -14,11 +14,8 @@
     return getActivePosition();
   });
 
-  const slice = $derived.by(() => {
-    if (!activePosition) return null;
-    void evalState.byTicker;
-    return getEval(activePosition.ticker);
-  });
+  // App.svelte ensures slice exists; getEval here is a pure read.
+  const slice = $derived(activePosition ? getEval(activePosition.ticker) : null);
 
   function dotClass(verdict: 'bullish' | 'bearish' | 'neutral'): string {
     if (verdict === 'bullish') return 'dot dot-bullish';

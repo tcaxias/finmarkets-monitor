@@ -14,7 +14,7 @@
     type LineData,
   } from 'lightweight-charts';
 
-  import { evalState, getEval } from '../lib/evaluation.svelte';
+  import { getEval } from '../lib/evaluation.svelte';
   import { settings, getActivePosition } from '../lib/settings.svelte';
   import type { DivergenceFlag } from '../lib/indicators';
 
@@ -39,11 +39,8 @@
     return getActivePosition();
   });
 
-  const slice = $derived.by(() => {
-    if (!activePosition) return null;
-    void evalState.byTicker;
-    return getEval(activePosition.ticker);
-  });
+  // App.svelte ensures slice exists; getEval here is a pure read.
+  const slice = $derived(activePosition ? getEval(activePosition.ticker) : null);
 
   const COLORS = {
     bg: '#0f1419',

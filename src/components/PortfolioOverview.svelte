@@ -7,7 +7,7 @@
   // to refresh.
 
   import { settings, setActive, type Position } from '../lib/settings.svelte';
-  import { evalState, getEval } from '../lib/evaluation.svelte';
+  import { getEval } from '../lib/evaluation.svelte';
   import { dataState } from '../lib/data.svelte';
   import { viewState } from '../lib/viewState.svelte';
   import { computeThresholds } from '../lib/math';
@@ -97,7 +97,11 @@
   }
 
   const rows = $derived.by((): Row[] => {
-    void evalState.byTicker;
+    // App.svelte's positions $effect ensures a slice exists for every
+    // configured position, so getEval here is a pure read. Iterating
+    // settings.positions registers a dependency on the array's identity
+    // (added/removed positions trigger re-derive); reading slice
+    // properties below registers per-property dependencies for refresh.
     void dataState.lastFetchedByTicker;
     return settings.positions.map((pos) => {
       const slice = getEval(pos.ticker);

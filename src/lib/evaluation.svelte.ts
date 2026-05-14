@@ -101,18 +101,55 @@ function emptySlice(): PerTickerEval {
 }
 
 /**
- * Lazily initialize and return the per-ticker slice. Adding a new key to
- * a `$state`-tracked object is reactive in Svelte 5, so consumers that
- * call `getEval(ticker)` from a `$derived` will pick up the slice as soon
- * as it lands.
+ * Ensure a slice exists for `ticker`. Idempotent. Call this whenever a
+ * new position is added so consumers can read the slice via `getEval()`
+ * without worrying about whether the key exists yet.
+ *
+ * Why this is separate from `getEval()`:
+ *   Svelte 5 reactivity tracks property *reads* on `$state` proxies. A
+ *   pure read inside a `$derived` registers the dependency. But INSERTING
+ *   a new key into the proxy is what originally caused the "not yet
+ *   reactive" trap consumers worked around with `void evalState.byTicker`.
+ *   By centralising key insertion in this single mutator (called from
+ *   App.svelte as positions change) and making `getEval` a pure read, we
+ *   eliminate the touch-the-parent dance entirely.
+ *
+ * Returns the slice so callers can chain operations if needed.
  */
-export function getEval(ticker: string): PerTickerEval {
+export function ensureSlice(ticker: string): PerTickerEval {
   const t = ticker.trim().toUpperCase();
   if (!evalState.byTicker[t]) {
     evalState.byTicker[t] = emptySlice();
   }
   return evalState.byTicker[t];
 }
+
+/**
+ * Read the per-ticker slice. Returns the existing slice if present, or a
+ * stable empty slice if not. The empty-slice fallback means consumers
+ * can safely call `getEval()` for any ticker (even one that hasn't been
+ * `ensureSlice`-d yet) without hitting null. They'll see a "no data"
+ * shape until the slice is populated by `recomputeOne`.
+ *
+ * Reactive contract: this is a pure read. Reading any property of the
+ * returned object inside a `$derived` will register a dependency on
+ * that property — which is what we want for chart panels, status
+ * banner, etc. Calling `ensureSlice(ticker)` once (from App.svelte's
+ * positions effect) guarantees the slice exists before any consumer
+ * reads it.
+ */
+export function getEval(ticker: string): PerTickerEval {
+  const t = ticker.trim().toUpperCase();
+  return evalState.byTicker[t] ?? STABLE_EMPTY_SLICE;
+}
+
+/**
+ * Singleton empty slice returned by `getEval()` when the ticker hasn't
+ * been ensured yet. Frozen to make the "do not mutate" contract
+ * unambiguous — anyone trying to write here gets a TypeError instead of
+ * a confusing silent-corruption bug.
+ */
+const STABLE_EMPTY_SLICE: PerTickerEval = Object.freeze(emptySlice()) as PerTickerEval;
 
 // In-flight guard per (ticker, asOf) tuple so back-to-back triggers
 // (e.g. from a $effect firing on multiple deps) don't double-fetch the
@@ -148,7 +185,11 @@ export async function recomputeOne(ticker: string): Promise<void> {
   const existing = inFlight.get(key);
   if (existing) return existing;
 
-  const slice = getEval(t);
+  // ensureSlice (not getEval) — recompute is the canonical write path,
+  // so it owns the slice insertion if it isn't already there. Returns
+  // the live slice; subsequent mutations bump reactivity for consumers
+  // that already had the key registered as a dependency.
+  const slice = ensureSlice(t);
   const work = (async () => {
     slice.loading = true;
     slice.error = null;
