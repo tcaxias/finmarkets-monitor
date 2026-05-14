@@ -670,3 +670,111 @@ export async function getVolatilityRegimes(): Promise<VolatilityRow[]> {
     };
   });
 }
+
+export interface CorrelationPair {
+  tickerA: string;
+  tickerB: string;
+  /** Pearson correlation in [-1, 1], or null if < 30 overlapping bars. */
+  correlation: number | null;
+  barsOverlap: number;
+}
+
+/**
+ * Pairwise Pearson correlation of daily log returns over the trailing
+ * `windowBars` (default 60) trading days, for every distinct pair of
+ * supplied tickers.
+ *
+ * Returns lower-triangular pairs only (lexicographic `tickerA < tickerB`)
+ * because the matrix is symmetric — the upper triangle is redundant.
+ * Diagonal (self-correlation = 1.0) is NOT returned; callers fill it in.
+ *
+ * Pairs with < 30 overlapping bars in the window get `correlation=null`.
+ * Below that threshold the correlation point estimate is too noisy to
+ * be useful (rule-of-thumb minimum sample for a meaningful Pearson r).
+ *
+ * Implementation note: one query per pair. With handful-of-positions
+ * portfolios this is fine; if we ever support 50+ positions a single
+ * UNION ALL query would be more efficient, but for v1 the per-pair
+ * approach is more readable and lets us isolate any single failure.
+ *
+ * Tickers are validated against the same regex as `assertSafeTicker`
+ * (defense in depth — TICKER_RE upstream should already catch anything
+ * malformed, but we're string-interpolating into SQL).
+ */
+export async function getCorrelationMatrix(
+  tickers: string[],
+  windowBars: number = 60,
+): Promise<CorrelationPair[]> {
+  if (tickers.length < 2) return [];
+  const conn = await getConn();
+
+  for (const t of tickers) {
+    if (!/^[A-Z0-9]{1,10}$/.test(t)) {
+      throw new Error(`getCorrelationMatrix: unsafe ticker '${t}'`);
+    }
+  }
+
+  const pairs: { a: string; b: string }[] = [];
+  for (let i = 0; i < tickers.length; i++) {
+    for (let j = i + 1; j < tickers.length; j++) {
+      pairs.push({ a: tickers[i], b: tickers[j] });
+    }
+  }
+  if (pairs.length === 0) return [];
+
+  const out: CorrelationPair[] = [];
+  for (const { a, b } of pairs) {
+    // Per pair: build log-returns for each ticker, INNER JOIN by date
+    // so we only count days where BOTH have a bar (handles holidays /
+    // partial histories gracefully), take the most recent `windowBars`,
+    // run DuckDB's CORR aggregate.
+    const sql = `
+      WITH returns_a AS (
+        SELECT
+          dt,
+          ln(close / NULLIF(LAG(close) OVER (ORDER BY dt), 0)) AS r
+        FROM ohlcv WHERE ticker = '${a}'
+      ),
+      returns_b AS (
+        SELECT
+          dt,
+          ln(close / NULLIF(LAG(close) OVER (ORDER BY dt), 0)) AS r
+        FROM ohlcv WHERE ticker = '${b}'
+      ),
+      paired AS (
+        SELECT a.dt, a.r AS ra, b.r AS rb,
+          ROW_NUMBER() OVER (ORDER BY a.dt DESC) AS rn
+        FROM returns_a a
+        JOIN returns_b b ON a.dt = b.dt
+        WHERE a.r IS NOT NULL AND b.r IS NOT NULL
+      ),
+      windowed AS (
+        SELECT * FROM paired WHERE rn <= ${windowBars}
+      )
+      SELECT
+        CORR(ra, rb) AS correlation,
+        COUNT(*) AS bars_overlap
+      FROM windowed
+    `;
+    const result = await conn.query(sql);
+    const rows = result.toArray().map((row) => row.toJSON() as Record<string, unknown>);
+    const row = rows[0] ?? {};
+    const bars = toNum(row.bars_overlap ?? 0);
+    // CORR returns NULL when the input has zero variance (constant
+    // series) or when there's only one row — guard against NaN/null
+    // in addition to the bars threshold so the UI gets a clean
+    // null sentinel for "can't compute" rather than NaN.
+    let correlation: number | null = null;
+    if (bars >= 30 && row.correlation !== null && row.correlation !== undefined) {
+      const c = toNum(row.correlation);
+      correlation = Number.isFinite(c) ? c : null;
+    }
+    out.push({
+      tickerA: a,
+      tickerB: b,
+      correlation,
+      barsOverlap: bars,
+    });
+  }
+  return out;
+}

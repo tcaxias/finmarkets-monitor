@@ -22,6 +22,7 @@
   import PortfolioReview from './components/PortfolioReview.svelte';
   import LazyScreenerPanel from './components/lazy/LazyScreenerPanel.svelte';
   import LazyAnomaliesPanel from './components/lazy/LazyAnomaliesPanel.svelte';
+  import LazyCorrelationPanel from './components/lazy/LazyCorrelationPanel.svelte';
   import PositionsPanel from './components/PositionsPanel.svelte';
   import DataPanel from './components/DataPanel.svelte';
   import WitnessPanel from './components/WitnessPanel.svelte';
@@ -195,6 +196,7 @@
         <a href="#overview">Overview</a>
         <a href="#screener">Screener</a>
         <a href="#anomalies">Anomalies</a>
+        <a href="#correlations">Correlations</a>
         <a href="#chart">Charts</a>
         <a href="#review">Review</a>
       {/if}
@@ -247,6 +249,9 @@
       </section>
       <section class="container wide stack" id="anomalies">
         <LazyAnomaliesPanel />
+      </section>
+      <section class="container wide stack" id="correlations">
+        <LazyCorrelationPanel />
       </section>
       <section class="container wide stack" id="chart">
         <PortfolioCharts />

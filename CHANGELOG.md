@@ -7,6 +7,38 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Pairwise correlation matrix panel.** New Correlations panel in
+  Portfolio mode showing the 60-day rolling Pearson correlation of
+  daily log returns across every configured position. Heat-map by
+  default — green (positive) → dark gray (zero) → red (negative),
+  intensity scaled to |r| — with a radio toggle to switch to numeric
+  display. Diagonal is always 1.0; matrix is symmetric. Cells with
+  fewer than 30 overlapping bars in the window render "—" (point
+  estimate too noisy below that threshold). Why: "are my positions
+  actually diversified, or are they all moving together?" is a real
+  diversification question that's hard to answer by eyeballing
+  individual charts — a correlation matrix is the standard quant
+  tool for it. Backed by a new `getCorrelationMatrix(tickers,
+  windowBars=60)` helper in `src/lib/queries.ts` that runs one
+  query per pair (lower-triangular only — matrix is symmetric, no
+  point computing the upper half), each query JOINing two log-return
+  CTEs by date and applying DuckDB's `CORR` aggregate over the
+  most-recent N overlapping bars. Per-pair (rather than single
+  UNION ALL) was chosen for v1 readability; with handful-of-position
+  portfolios the cost is negligible. Lazy-loaded via
+  `LazyCorrelationPanel` so the chunk only ships on the Portfolio
+  tab. Mounted in `App.svelte` between AnomaliesPanel and
+  PortfolioCharts; new `#correlations` entry in the Portfolio page
+  nav. Five new integration tests in
+  `src/lib/__tests__/correlation.integration.test.ts` pin the math
+  numerically: identical series → r=+1.0, mirrored log returns →
+  r=-1.0, insufficient-overlap edge (4 bars when one ticker has only
+  5 of history), windowBars trim cap (200 bars input, only 60
+  counted), and independent-noise series stay |r| < 0.5. No schema
+  migration. Bundle delta: +3.68 kB raw / +1.70 kB gzip on a new
+  lazy chunk (CSS +1.65 kB raw / +0.57 kB gzip). Tests: 294 (up
+  from 289).
+
 - **Post-earnings drift backtest query.** New 4th entry in
   `BACKTEST_QUERIES`: "Post-earnings drift (1/5/20 day forward
   returns)". Joins `earnings_events` with `ohlcv` to compute the
