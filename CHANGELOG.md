@@ -7,6 +7,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Volatility regime badge in StatusBanner.** New `Vol: X% (regime)`
+  pill between Pcover and Updated showing the active position's
+  30-day realized volatility, annualized, with a qualitative regime
+  classification: low (< 20%), medium (20-35%), high (35-60%),
+  extreme (≥ 60%). Color-coded by regime — green (low / calm), muted
+  (medium / typical), amber (high / size down), red (extreme / stand
+  aside). Hover tooltip explains the calculation and shows the actual
+  bars-sampled count for partial windows. Hidden when sampled bars
+  < 10 to avoid faking confidence on newly added positions.
+  Why: indicator interpretation depends heavily on volatility regime
+  — RSI thresholds, MACD signal magnitude, and stop-distance sizing
+  all should be regime-aware. Surfacing the bucket on every glance
+  gives that context for free. Backed by a new `getVolatilityRegimes()`
+  helper in `src/lib/queries.ts` that runs a single SQL pass over
+  `ohlcv` using `STDDEV_SAMP(log_return) OVER (29 PRECEDING) *
+  sqrt(252)`. Sample stddev (n-1 divisor) is the right choice for a
+  finite trailing window; sqrt(252) is the standard US-equity
+  trading-days annualization. Six new integration tests in
+  `src/lib/__tests__/volatility.integration.test.ts` cover each regime
+  bucket (low/medium/extreme) with deterministic alternating-sign
+  log-return series, short-history graceful degrade (no crash on 4
+  returns), per-ticker isolation via PARTITION BY, and the empty-table
+  case. No schema migration needed. Bundle delta: +2.5 kB raw / +0.6
+  kB gzip. Tests: 280 (up from 274).
+
 - **Drawdown column in Portfolio Overview.** New "Drawdown" column
   between Distance and Conviction shows each position's current % off
   its rolling 252-trading-day high, plus days since that high was set.

@@ -11,6 +11,7 @@
   import { dataState } from '../lib/data.svelte';
   import { settings, getActivePosition } from '../lib/settings.svelte';
   import { computeThresholds } from '../lib/math';
+  import { getVolatilityRegimes, type VolatilityRow } from '../lib/queries';
   import TickerLinks from './TickerLinks.svelte';
 
   // Keep a "now" tick so the relative-time string updates without us having
@@ -77,6 +78,99 @@
   const lastFetched = $derived(
     ticker ? (dataState.lastFetchedByTicker[ticker] ?? null) : null,
   );
+
+  // 30-day realised volatility for the active ticker, computed
+  // server-side via `getVolatilityRegimes` (single SQL pass over all
+  // tickers; we filter to the active one client-side). Refetched when
+  // the data watermark advances or the active ticker changes — same
+  // best-effort pattern as the drawdown column in PortfolioOverview:
+  // log to console.warn on failure, leave the badge hidden, do not
+  // block the rest of the banner.
+  //
+  // Minimum bars threshold (10) is a deliberate floor below the full
+  // 30-bar window: a sample stddev on 4-9 returns is too noisy to
+  // attach a regime label to without misleading the operator. Above
+  // 10 bars we render the badge with the actual `barsSampled` count
+  // available to the tooltip so partial windows are clearly marked.
+  let vol = $state<VolatilityRow | null>(null);
+  $effect(() => {
+    void dataState.lastFetched;
+    const t = ticker;
+    if (!t) {
+      vol = null;
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const rows = await getVolatilityRegimes();
+        if (cancelled) return;
+        vol = rows.find((r) => r.ticker === t) ?? null;
+      } catch (err) {
+        if (cancelled) return;
+        console.warn('getVolatilityRegimes failed', err);
+        vol = null;
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  });
+
+  // Hide the badge for thin windows — sample stddev on < 10 returns
+  // is noise, not signal, and labeling such a position "low/extreme"
+  // is worse than no label at all.
+  const volVisible = $derived(vol !== null && vol.barsSampled >= 10);
+
+  function regimeLabel(r: VolatilityRow['regime']): string {
+    switch (r) {
+      case 'low':
+        return 'low';
+      case 'medium':
+        return 'med';
+      case 'high':
+        return 'high';
+      case 'extreme':
+        return 'extreme';
+    }
+  }
+
+  // Map regime → tone slot already styled below (block-value[data-tone]):
+  //   low      → good   (calm)
+  //   medium   → muted  (typical, no signal)
+  //   high     → warn   (heightened, size down)
+  //   extreme  → bad    (size way down or stand aside)
+  function regimeTone(
+    r: VolatilityRow['regime'],
+  ): 'good' | 'muted' | 'warn' | 'bad' {
+    switch (r) {
+      case 'low':
+        return 'good';
+      case 'medium':
+        return 'muted';
+      case 'high':
+        return 'warn';
+      case 'extreme':
+        return 'bad';
+    }
+  }
+
+  function regimeRangeLabel(r: VolatilityRow['regime']): string {
+    switch (r) {
+      case 'low':
+        return '< 20%';
+      case 'medium':
+        return '20-35%';
+      case 'high':
+        return '35-60%';
+      case 'extreme':
+        return '≥ 60%';
+    }
+  }
+
+  function fmtVolPct(v: number): string {
+    return `${(v * 100).toFixed(0)}%`;
+  }
 
   function fmtPrice(v: number | null): string {
     if (v === null || !Number.isFinite(v)) return '—';
@@ -180,6 +274,21 @@
               {pcoverState.cushion >= 0 ? 'cushion' : 'underwater'})
             </span>
           {/if}
+        </span>
+      </span>
+    {/if}
+
+    {#if volVisible && vol}
+      <span class="sep" aria-hidden="true"></span>
+
+      <span
+        class="block"
+        title={`30-day realized volatility, annualized. Bucket: ${regimeLabel(vol.regime)} (${regimeRangeLabel(vol.regime)}). Sampled ${vol.barsSampled} bar${vol.barsSampled === 1 ? '' : 's'}.`}
+      >
+        <span class="block-label">Vol</span>
+        <span class="block-value" data-tone={regimeTone(vol.regime)}>
+          {fmtVolPct(vol.realizedVol30d)}
+          <span class="vol-regime">({regimeLabel(vol.regime)})</span>
         </span>
       </span>
     {/if}
@@ -325,6 +434,15 @@
   }
 
   .cushion {
+    font-size: 12px;
+    opacity: 0.85;
+    margin-left: 2px;
+  }
+
+  /* Regime suffix on the Vol pill — same muted-clarifier treatment as
+     `.cushion`. The numeric value carries the tone colour; the suffix
+     reads as a qualitative label, not a competing signal. */
+  .vol-regime {
     font-size: 12px;
     opacity: 0.85;
     margin-left: 2px;

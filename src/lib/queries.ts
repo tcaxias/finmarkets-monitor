@@ -575,3 +575,98 @@ export async function getDrawdowns(): Promise<DrawdownRow[]> {
     };
   });
 }
+
+export interface VolatilityRow {
+  ticker: string;
+  /** Annualised realised volatility, as a fraction (0.34 = 34%). */
+  realizedVol30d: number;
+  regime: 'low' | 'medium' | 'high' | 'extreme';
+  /**
+   * Number of log-return bars that contributed to the trailing window.
+   * < 30 means the window wasn't full (typical for newly-added tickers
+   * with thin history). Callers can downgrade UI confidence when this
+   * is too small to trust the stddev — sample stddev with n=4 is a
+   * very different beast than n=30.
+   */
+  barsSampled: number;
+}
+
+/**
+ * Per-ticker 30-day realised volatility (annualised) with a qualitative
+ * regime classification.
+ *
+ *   log_return_t = ln(close_t / close_{t-1})
+ *   sd_30        = STDDEV_SAMP(log_return) over trailing 30 bars
+ *   annualised   = sd_30 * sqrt(252)
+ *
+ * Sample stddev (n-1 divisor) — STDDEV_SAMP — is the right choice for
+ * a finite trailing window. Population stddev would understate
+ * variability at small n. Annualisation factor sqrt(252) is the
+ * standard US-equity trading-days-per-year convention.
+ *
+ * Regime thresholds, calibrated for daily-bar US equities:
+ *   - low      < 20%   (megacap defensive — SPY, JNJ)
+ *   - medium   20-35%  (typical large-cap growth)
+ *   - high     35-60%  (mid-cap, tech)
+ *   - extreme  ≥ 60%   (biotech, leveraged ETFs, meme stocks)
+ *
+ * One row per ticker that has at least 2 bars in the table (≥ 2 bars
+ * are needed to derive even a single log return; STDDEV_SAMP needs ≥ 2
+ * non-null values, so the latest-bar row will only emit when we have
+ * at least 3 bars total — bars_sampled ≥ 2). The bars-sampled flag
+ * lets the UI hide the badge for windows too thin to be meaningful.
+ *
+ * No `asOf` parameter — volatility reflects the latest persisted bars
+ * regardless of historical-view state, matching `getDrawdowns`.
+ */
+export async function getVolatilityRegimes(): Promise<VolatilityRow[]> {
+  const conn = await getConn();
+  const result = await conn.query(`
+    WITH returns AS (
+      SELECT
+        ticker,
+        dt,
+        ln(close / NULLIF(LAG(close) OVER (PARTITION BY ticker ORDER BY dt), 0)) AS log_ret
+      FROM ohlcv
+    ),
+    windowed AS (
+      SELECT
+        ticker,
+        dt,
+        log_ret,
+        STDDEV_SAMP(log_ret) OVER (
+          PARTITION BY ticker ORDER BY dt
+          ROWS BETWEEN 29 PRECEDING AND CURRENT ROW
+        ) AS sd_30,
+        COUNT(log_ret) OVER (
+          PARTITION BY ticker ORDER BY dt
+          ROWS BETWEEN 29 PRECEDING AND CURRENT ROW
+        ) AS bars,
+        ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY dt DESC) AS rn
+      FROM returns
+      WHERE log_ret IS NOT NULL
+    )
+    SELECT
+      ticker,
+      sd_30 * sqrt(252) AS annualized_vol,
+      bars
+    FROM windowed
+    WHERE rn = 1 AND sd_30 IS NOT NULL
+    ORDER BY ticker
+  `);
+  return result.toArray().map((row) => {
+    const r = row.toJSON() as Record<string, unknown>;
+    const vol = toNum(r.annualized_vol);
+    let regime: VolatilityRow['regime'];
+    if (vol < 0.2) regime = 'low';
+    else if (vol < 0.35) regime = 'medium';
+    else if (vol < 0.6) regime = 'high';
+    else regime = 'extreme';
+    return {
+      ticker: String(r.ticker),
+      realizedVol30d: vol,
+      regime,
+      barsSampled: toNum(r.bars),
+    };
+  });
+}
