@@ -5,6 +5,40 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added (SQL parity-check affordance)
+
+- **VWAP(20) latest-value pill in the MACD panel header.** Was
+  chart-only before; now displayed as a copy-pasteable number
+  alongside the MACD/Signal/Histogram pills. Hover-tooltip flags the
+  TradingView caveat.
+- **`[parity]` console.debug log on every successful daily recompute.**
+  Emits `[parity] <TICKER> <YYYY-MM-DD>: RSI=X.XX, MACD=Y.YYY
+  signal=Z.ZZZ hist=W.WWW, VWAP=$A.AA` so the user can open DevTools
+  and copy the line straight into a parity comparison.
+
+### Verified (Indicator math parity)
+
+- **Manual SQL parity workflow documented.** Cross-check our
+  DuckDB recursive-CTE indicators against external references:
+  - **RSI(14)** — investing.com `/equities/<slug>-technical` →
+    "Technical Indicators" table. Tolerance: ±1.0 (Wilder's
+    smoothing seed varies across libs; converges within ~50 bars).
+  - **MACD(12, 26, 9)** — same investing.com page or TradingView
+    with the standard MACD indicator added. Tolerance: ±0.01 (pure
+    EMA arithmetic). Mismatches > 0.01 typically indicate adjusted
+    vs raw close prices.
+  - **VWAP(20)** — **must compare against TradingView's
+    "Volume Weighted Moving Average" (VWMA), length 20, source
+    close.** TradingView's default "VWAP" is *session-anchored*
+    (resets daily) and is NOT what we compute. Our VWAP is a
+    20-day rolling `SUM(close * volume) / SUM(volume)`. Tolerance:
+    ±$0.01.
+- **Closes the C5 review's deferred parity-verification gap.** The
+  recursive-CTE math (sqlIndicators.ts) is faithful to Wilder /
+  Appel and now covered by integration tests (commit `403b4a9`)
+  AND verifiable by hand against external references via the
+  parity-check workflow above.
+
 ### Added (Earnings event annotations)
 
 - **Earnings event markers on the price chart + Recent Earnings widget.**

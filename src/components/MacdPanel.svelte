@@ -42,6 +42,17 @@
   // App.svelte ensures slice exists; getEval here is a pure read.
   const slice = $derived(activePosition ? getEval(activePosition.ticker) : null);
 
+  // VWAP(20) latest readout — surfaced here (rather than its own panel)
+  // so all numeric "verification values" for SQL parity checks live on
+  // one row. The chart already shows VWAP as a purple line; this pill
+  // makes the exact value copy-pasteable for cross-checking against
+  // VWMA(20) on TradingView (NOT TradingView's session-anchored "VWAP",
+  // which resets daily and is NOT what we compute).
+  const latestVwap = $derived.by(() => {
+    if (!slice || slice.vwap.length === 0) return null;
+    return slice.vwap[slice.vwap.length - 1].value;
+  });
+
   const COLORS = {
     bg: '#0f1419',
     grid: '#222222',
@@ -210,6 +221,14 @@
             style="color: {latest.histogram >= 0 ? COLORS.histPos : COLORS.histNeg}"
           >
             {latest.histogram.toFixed(3)}
+          </span>
+        </span>
+      {/if}
+      {#if latestVwap !== null}
+        <span class="metric" title="20-day rolling VWAP — compare against TradingView's VWMA(20), not session VWAP">
+          <span class="metric-label">VWAP</span>
+          <span class="metric-value" style="color: #9b59b6">
+            ${latestVwap.toFixed(2)}
           </span>
         </span>
       {/if}

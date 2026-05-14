@@ -378,6 +378,30 @@ export async function recomputeOne(ticker: string): Promise<void> {
       slice.timeframe = timeframe;
       slice.isIntraday = false;
       slice.generation += 1;
+
+      // Parity log — emits the latest computed indicator values to the
+      // console after every successful daily-path recompute. Lets us
+      // cross-check our DuckDB recursive-CTE indicators against
+      // reference platforms (investing.com RSI/MACD, TradingView
+      // VWMA(20)) without needing a dedicated UI affordance. Open
+      // DevTools console, copy the line, paste-compare against the
+      // reference. See CHANGELOG for the parity-check workflow + the
+      // VWMA-vs-VWAP caveat (TradingView's "VWAP" is session-anchored,
+      // not what we compute).
+      const lastDt = candles.length > 0
+        ? new Date(candles[candles.length - 1].time * 1000).toISOString().slice(0, 10)
+        : 'n/a';
+      const lastRsi = rsi.length > 0 ? rsi[rsi.length - 1].value : null;
+      const lastMacd = macd.length > 0 ? macd[macd.length - 1] : null;
+      const lastVwap = vwap.length > 0 ? vwap[vwap.length - 1].value : null;
+      console.debug(
+        `[parity] ${t} ${lastDt}: ` +
+          `RSI=${lastRsi?.toFixed(2) ?? 'n/a'}, ` +
+          `MACD=${lastMacd?.macd.toFixed(3) ?? 'n/a'} ` +
+          `signal=${lastMacd?.signal.toFixed(3) ?? 'n/a'} ` +
+          `hist=${lastMacd?.histogram.toFixed(3) ?? 'n/a'}, ` +
+          `VWAP=${lastVwap?.toFixed(2) ?? 'n/a'}`,
+      );
     } catch (err) {
       slice.error = err instanceof Error ? err.message : String(err);
       console.error(`evaluation: recompute failed for ${t}`, err);
