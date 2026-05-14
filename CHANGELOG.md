@@ -5,6 +5,34 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added (DuckDB integration tests)
+
+- **DuckDB integration tests via `@duckdb/node-api`.** New
+  `src/lib/__tests__/duckdb-fixture.ts` boots a fresh in-memory DuckDB
+  per test, applies the migration schema (v1 → v3 inline + helpers for
+  RSI/MACD materialisation), and exposes a synthetic OHLCV inserter
+  with reproducible seeded noise. Four new integration test files
+  exercise the SQL strings against a real DuckDB engine:
+  - `sqlIndicators.integration.test.ts` — `materializeRsi` /
+    `materializeMacd` actually execute, plus monotonic-input edge
+    cases (RSI=100 on pure uptrend, RSI=0 on pure downtrend), plus a
+    regression test that asserts the WITHOUT-RECURSIVE version of the
+    SQL DOES throw (pins the bug we fixed in v5).
+  - `screener.integration.test.ts` — every SCREEN's `buildSql`
+    executes against fixture data without throwing; empty-positions
+    safety; `current_snapshot` view returns one row per ticker.
+  - `anomalies.integration.test.ts` — every ANOMALY's `buildSql`
+    executes; volume z-score detector fires on a synthetic spike.
+  - `backtest.integration.test.ts` — every BACKTEST_QUERIES entry
+    executes; `best-30d-windows` LIMIT/ORDER invariants verified.
+  Strategy chosen: extract-and-execute (SQL strings duplicated into
+  the fixture) rather than adapter-pattern over the existing
+  `AsyncDuckDBConnection` consumers — the bug class we're protecting
+  against is "the SQL string is invalid", which the lighter approach
+  fully covers. `@duckdb/node-api@1.5.2-r.1` added as devDependency
+  (~113MB native binary on darwin-arm64; zero impact on production
+  bundle). Total tests: 258 (up from 231).
+
 ### Fixed (DuckDB-leverage push review findings)
 
 - **Migration v4: backfill RSI(14) and MACD(12,26,9)** for tickers that
@@ -56,12 +84,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Deferred (out of scope for this commit)
 
-- **SQL strings still aren't executed in automated tests.** Real fix
-  needs DuckDB-WASM (or duckdb-node) in the test runner — separate
-  effort. Migration v4 SQL was manually verified against the live
-  deploy.
 - **CSS duplication between Screener and Anomalies panels** — pure
   polish, not blocking.
+
+  (Previous deferral "SQL strings still aren't executed in automated
+  tests" is now addressed — see the "Added (DuckDB integration tests)"
+  section above.)
 
 ### Added
 

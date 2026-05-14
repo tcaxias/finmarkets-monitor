@@ -14,6 +14,7 @@
     "test": "vitest"
   },
   "devDependencies": {
+    "@duckdb/node-api": "^1.5.2-r.1",
     "@sveltejs/vite-plugin-svelte": "^7.1.2",
     "@tsconfig/svelte": "^5.0.8",
     "@types/node": "^24.12.3",
