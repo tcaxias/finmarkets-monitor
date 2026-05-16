@@ -601,7 +601,7 @@ describe('setActive', () => {
     expect(settings.activePositionId).toBe(null);
   });
 
-  it('silently ignores unknown ids', () => {
+  it('ignores unknown ids (logs warn, leaves activePositionId untouched)', () => {
     const a = addPosition({
       ticker: 'A',
       vestPrice: 1,
@@ -609,8 +609,18 @@ describe('setActive', () => {
       taxRate: 0.4,
       taxDueDate: '',
     });
-    setActive('nope');
-    expect(settings.activePositionId).toBe(a.id);
+    // try/finally so a mid-test assertion failure still restores the spy —
+    // otherwise a leaked spy could silently affect subsequent tests that
+    // didn't opt in to mocking console.warn.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      setActive('nope');
+      expect(settings.activePositionId).toBe(a.id);
+      expect(warnSpy).toHaveBeenCalledOnce();
+      expect(warnSpy.mock.calls[0][0]).toContain('unknown position id: nope');
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
 

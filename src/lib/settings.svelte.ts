@@ -351,8 +351,11 @@ export function updatePosition(id: string, patch: Partial<Omit<Position, 'id'>>)
 
 /**
  * Set the active position. `null` switches to portfolio overview mode.
- * Unknown ids are silently ignored — that keeps stale references (e.g.
- * after a delete in another tab) from breaking the UI.
+ * Unknown ids are ignored (with a console.warn) — that keeps stale
+ * references (e.g. after a delete in another tab) from breaking the UI,
+ * but the warn means a "tabs do nothing" bug from a stale id is one
+ * console open away from being root-caused, rather than a silent no-op
+ * that requires deploying diagnostic instrumentation to diagnose.
  */
 export function setActive(id: string | null): void {
   if (id === null) {
@@ -361,7 +364,13 @@ export function setActive(id: string | null): void {
     return;
   }
   const exists = settings.positions.some((p) => p.id === id);
-  if (!exists) return;
+  if (!exists) {
+    console.warn(
+      `[settings.setActive] ignored unknown position id: ${id}. ` +
+        `Known ids: [${settings.positions.map((p) => p.id).join(', ')}].`,
+    );
+    return;
+  }
   settings.activePositionId = id;
   save();
 }
